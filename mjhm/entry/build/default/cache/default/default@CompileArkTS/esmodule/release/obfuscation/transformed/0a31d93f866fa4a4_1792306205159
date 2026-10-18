@@ -1,0 +1,20 @@
+{
+  "moduleInfo": {
+    "content": "/**\n * 全局常量与配置\n * 全真实数据：小米账号登录走米家云私有协议（micloud 三步握手），设备控制走 miIO 局域网协议\n */\nexport class AppConfig {\n    // 米家云 API 基址（签名请求）—— 逆向 aa.apk（com.xiaomi.smarthome）确认：\n    // 中国大陆服务器使用新域名 api.mijia.tech（ir7.OooOoO0 逻辑），海外用 {region}.api.io.mi.com\n    static readonly IOT_API_BASE: string = 'https://api.mijia.tech/app';\n    // 本地存储 key\n    static readonly KEY_TOKEN: string = 'mijia_token';\n    static readonly KEY_USER: string = 'mijia_user';\n    static readonly KEY_CURRENT_HOME: string = 'mijia_current_home';\n    static readonly KEY_CLOUD_DEVICES: string = 'mijia_cloud_devices';\n    static readonly KEY_SCENES: string = 'mijia_scenes';\n}\n/** 全局日志 */\nexport class Logger {\n    static readonly DOMAIN: number = 0x0000;\n    static info(tag: string, msg: string): void {\n        console.info(`[${tag}] ${msg}`);\n    }\n    static error(tag: string, msg: string): void {\n        console.error(`[${tag}] ${msg}`);\n    }\n}\n",
+    "buildFilePath": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\cache\\default\\default@CompileArkTS\\esmodule\\release\\entry\\src\\main\\ets\\common\\AppConfig.ts",
+    "relativeSourceFilePath": "entry/src/main/ets/common/AppConfig.ets",
+    "originSourceFilePath": "C:/Users/ZhixinGong/WorkBuddy/2026-10-16-09-47-37/mjhm/entry/src/main/ets/common/AppConfig.ets",
+    "rollupModuleId": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\src\\main\\ets\\common\\AppConfig.ets"
+  },
+  "previousStageSourceMap": {
+    "version": 3,
+    "file": "AppConfig.ets",
+    "sourceRoot": "",
+    "sources": [
+      "entry/src/main/ets/common/AppConfig.ets"
+    ],
+    "names": [],
+    "mappings": "AAAA;;;GAGG;AACH,MAAM,OAAO,SAAS;IACpB,wDAAwD;IACxD,yEAAyE;IACzE,MAAM,CAAC,QAAQ,CAAC,YAAY,EAAE,MAAM,GAAG,4BAA4B,CAAC;IAEpE,WAAW;IACX,MAAM,CAAC,QAAQ,CAAC,SAAS,EAAE,MAAM,GAAG,aAAa,CAAC;IAClD,MAAM,CAAC,QAAQ,CAAC,QAAQ,EAAE,MAAM,GAAG,YAAY,CAAC;IAChD,MAAM,CAAC,QAAQ,CAAC,gBAAgB,EAAE,MAAM,GAAG,oBAAoB,CAAC;IAChE,MAAM,CAAC,QAAQ,CAAC,iBAAiB,EAAE,MAAM,GAAG,qBAAqB,CAAC;IAClE,MAAM,CAAC,QAAQ,CAAC,UAAU,EAAE,MAAM,GAAG,cAAc,CAAC;CACrD;AAED,WAAW;AACX,MAAM,OAAO,MAAM;IACjB,MAAM,CAAC,QAAQ,CAAC,MAAM,EAAE,MAAM,GAAG,MAAM,CAAC;IAExC,MAAM,CAAC,IAAI,CAAC,GAAG,EAAE,MAAM,EAAE,GAAG,EAAE,MAAM,GAAG,IAAI;QACzC,OAAO,CAAC,IAAI,CAAC,IAAI,GAAG,KAAK,GAAG,EAAE,CAAC,CAAC;IAClC,CAAC;IAED,MAAM,CAAC,KAAK,CAAC,GAAG,EAAE,MAAM,EAAE,GAAG,EAAE,MAAM,GAAG,IAAI;QAC1C,OAAO,CAAC,KAAK,CAAC,IAAI,GAAG,KAAK,GAAG,EAAE,CAAC,CAAC;IACnC,CAAC;CACF",
+    "entry-package-info": "entry|1.0.0"
+  }
+}

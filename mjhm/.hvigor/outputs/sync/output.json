@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "ohos-module-entry": {
+    "SELECT_TARGET": "default",
+    "MODULE_BUILD_DIR": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build",
+    "TARGETS": {
+      "default": {
+        "SOURCE_ROOT": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\src\\main",
+        "RESOURCES_PATH": [
+          "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\src\\main\\resources"
+        ],
+        "BUILD_PATH": {
+          "OUTPUT_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\outputs\\default",
+          "INTERMEDIA_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates",
+          "JS_ASSETS_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\loader_out\\default",
+          "JS_LITE_ASSETS_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\loader_out_lite\\default",
+          "RES_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\res\\default",
+          "RES_PROFILE_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\res\\default\\resources\\base\\profile",
+          "ETS_SUPER_VISUAL_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\cache\\default\\default@CompileArkTS\\esmodule",
+          "JS_SUPER_VISUAL_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\cache\\default\\default@CompileJS\\jsbundle",
+          "WORKER_LOADER": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\loader\\default\\loader.json",
+          "MANIFEST_JSON": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\manifest\\default",
+          "OUTPUT_METADATA_JSON": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\hap_metadata\\default\\output_metadata.json",
+          "SOURCE_MAP_DIR": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\source_map\\default"
+        },
+        "BUILD_OPTION": {
+          "debuggable": true
+        }
+      },
+      "ohosTest": {
+        "SOURCE_ROOT": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\src\\ohosTest",
+        "RESOURCES_PATH": [
+          "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\src\\ohosTest\\resources"
+        ],
+        "BUILD_PATH": {
+          "OUTPUT_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\outputs\\ohosTest",
+          "INTERMEDIA_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates",
+          "JS_ASSETS_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\loader_out\\ohosTest",
+          "JS_LITE_ASSETS_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\loader_out_lite\\ohosTest",
+          "RES_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\res\\ohosTest",
+          "RES_PROFILE_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\res\\ohosTest\\resources\\base\\profile",
+          "ETS_SUPER_VISUAL_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\cache\\ohosTest\\ohosTest@OhosTestCompileArkTS\\esmodule",
+          "JS_SUPER_VISUAL_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\cache\\ohosTest\\ohosTest@OhosTestCompileJS\\jsbundle",
+          "WORKER_LOADER": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\loader\\ohosTest\\loader.json",
+          "MANIFEST_JSON": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\manifest\\ohosTest",
+          "OUTPUT_METADATA_JSON": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\hap_metadata\\ohosTest\\output_metadata.json",
+          "SOURCE_MAP_DIR": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry\\build\\default\\intermediates\\source_map\\ohosTest"
+        },
+        "BUILD_OPTION": {
+          "debuggable": true
+        }
+      }
+    },
+    "BUILD_OPTION": {
+      "default-default": {
+        "debuggable": true,
+        "copyFrom": "default",
+        "strictMode": {
+          "caseSensitiveCheck": true,
+          "useNormalizedOHMUrl": true
+        },
+        "name": "debug"
+      }
+    },
+    "BUILD_PROFILE_OPT": {
+      "apiType": "stageMode",
+      "buildOption": {},
+      "buildOptionSet": [
+        {
+          "name": "release",
+          "arkOptions": {
+            "obfuscation": {
+              "ruleOptions": {
+                "enable": true,
+                "files": [
+                  "./obfuscation-rules.txt"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "name": "default"
+        },
+        {
+          "name": "debug"
+        }
+      ],
+      "targets": [
+        {
+          "name": "default"
+        },
+        {
+          "name": "ohosTest"
+        }
+      ]
+    },
+    "BUILD_CACHE_DIR": ""
+  },
+  "ohos-project": {
+    "SELECT_PRODUCT_NAME": "default",
+    "MODULE_BUILD_DIR": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\build",
+    "BUNDLE_NAME": "com.mijia.hm",
+    "VERSION_CODE": 1000000,
+    "VERSION_NAME": "1.0.0",
+    "BUILD_PATH": {
+      "OUTPUT_PATH": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\build\\outputs\\default"
+    },
+    "MODULES": [
+      {
+        "name": "entry",
+        "srcPath": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm\\entry",
+        "targets": [
+          {
+            "name": "default",
+            "applyToProducts": [
+              "default"
+            ]
+          }
+        ],
+        "belongProjectPath": "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm"
+      }
+    ],
+    "PROFILE_OPT": {
+      "app": {
+        "signingConfigs": [
+          {
+            "name": "default",
+            "type": "HarmonyOS",
+            "material": {
+              "certpath": "C:\\Users\\ZhixinGong\\.ohos\\config\\default_mjhm_nXElK8MEyvTov5YXTMW8tuMlgTMFAee4XStdMSLajeY=.cer",
+              "keyAlias": "debugKey",
+              "keyPassword": "0000001B32FBE30E572AEAC7D6FB2A7DF73274E4D6D0ACCB956D0A5AFE5E430C2A9594F311E7CD7FF5C2AE",
+              "profile": "C:\\Users\\ZhixinGong\\.ohos\\config\\default_mjhm_nXElK8MEyvTov5YXTMW8tuMlgTMFAee4XStdMSLajeY=.p7b",
+              "signAlg": "SHA256withECDSA",
+              "storeFile": "C:\\Users\\ZhixinGong\\.ohos\\config\\default_mjhm_nXElK8MEyvTov5YXTMW8tuMlgTMFAee4XStdMSLajeY=.p12",
+              "storePassword": "0000001B15CCE949246CE2834BE20BDD500EC7A83C897483710CA0EAD6D5521CB4965BC30C861247B897AA"
+            }
+          }
+        ],
+        "products": [
+          {
+            "name": "default",
+            "signingConfig": "default",
+            "compatibleSdkVersion": "5.0.0(12)",
+            "runtimeOS": "HarmonyOS",
+            "buildOption": {
+              "strictMode": {
+                "caseSensitiveCheck": true,
+                "useNormalizedOHMUrl": true
+              }
+            },
+            "targetSdkVersion": "6.0.2(22)"
+          }
+        ],
+        "buildModeSet": [
+          {
+            "name": "debug"
+          },
+          {
+            "name": "release"
+          }
+        ]
+      },
+      "modules": [
+        {
+          "name": "entry",
+          "srcPath": "./entry",
+          "targets": [
+            {
+              "name": "default",
+              "applyToProducts": [
+                "default"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "CONFIG_PROPERTIES": {
+      "enableSignTask": true,
+      "skipNativeIncremental": false,
+      "hvigor.keepDependency": true
+    },
+    "OVERALL_PROJECT_PATHS": [
+      "C:\\Users\\ZhixinGong\\WorkBuddy\\2026-10-16-09-47-37\\mjhm"
+    ],
+    "BUILD_CACHE_DIR": ""
+  }
+}

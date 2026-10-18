@@ -1,0 +1,28 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "米家主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "米家鸿蒙原生重写"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "米家"
+    },
+    {
+      "name": "bluetooth_reason",
+      "value": "用于发现并连接附近的米家蓝牙设备"
+    },
+    {
+      "name": "location_reason",
+      "value": "用于配网时获取附近的 Wi-Fi 网络信息"
+    },
+    {
+      "name": "background_reason",
+      "value": "用于在后台保持设备连接与场景执行"
+    }
+  ]
+}

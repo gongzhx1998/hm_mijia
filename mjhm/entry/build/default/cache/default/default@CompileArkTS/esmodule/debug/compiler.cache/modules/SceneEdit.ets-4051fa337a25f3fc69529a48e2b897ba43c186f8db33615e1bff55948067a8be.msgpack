@@ -1,0 +1,690 @@
+Ôr@Ÿªassertions¤code´customTransformCache¬dependencies¢id¤meta±moduleSideEffects¬originalCode±originalSourcemap«resolvedIds®sourcemapChainµsyntheticNamedExportsµtransformDependencies®transformFiles¨cacheAstÔrAÚ@œif (!("finalizeConstruction" in ViewPU.prototype)) {
+    Reflect.set(ViewPU.prototype, "finalizeConstruction", () => { });
+}
+import router from "@ohos.router";
+import promptAction from "@ohos.promptAction";
+import * as ApiService from '../service/ApiService';
+class SceneEdit extends ViewPU {
+    constructor(parent, params, __localStorage, elmtId = -1, paramsLambda = undefined, extraInfo) {
+        super(parent, __localStorage, elmtId, extraInfo);
+        if (typeof paramsLambda === "function") {
+            this.paramsGenerator_ = paramsLambda;
+        }
+        this.__sceneName = new ObservedPropertySimplePU('', this, "sceneName");
+        this.__conditionType = new ObservedPropertySimplePU('manual', this, "conditionType");
+        this.__conditionTime = new ObservedPropertySimplePU('22:00', this, "conditionTime");
+        this.__devices = new ObservedPropertyObjectPU([], this, "devices");
+        this.__selectedDevice = new ObservedPropertyObjectPU(null, this, "selectedDevice");
+        this.__targetPower = new ObservedPropertySimplePU(true, this, "targetPower");
+        this.__editingSceneId = new ObservedPropertySimplePU('', this, "editingSceneId");
+        this.setInitiallyProvidedValue(params);
+        this.finalizeConstruction();
+    }
+    setInitiallyProvidedValue(params) {
+        if (params.sceneName !== undefined) {
+            this.sceneName = params.sceneName;
+        }
+        if (params.conditionType !== undefined) {
+            this.conditionType = params.conditionType;
+        }
+        if (params.conditionTime !== undefined) {
+            this.conditionTime = params.conditionTime;
+        }
+        if (params.devices !== undefined) {
+            this.devices = params.devices;
+        }
+        if (params.selectedDevice !== undefined) {
+            this.selectedDevice = params.selectedDevice;
+        }
+        if (params.targetPower !== undefined) {
+            this.targetPower = params.targetPower;
+        }
+        if (params.editingSceneId !== undefined) {
+            this.editingSceneId = params.editingSceneId;
+        }
+    }
+    updateStateVars(params) {
+    }
+    purgeVariableDependenciesOnElmtId(rmElmtId) {
+        this.__sceneName.purgeDependencyOnElmtId(rmElmtId);
+        this.__conditionType.purgeDependencyOnElmtId(rmElmtId);
+        this.__conditionTime.purgeDependencyOnElmtId(rmElmtId);
+        this.__devices.purgeDependencyOnElmtId(rmElmtId);
+        this.__selectedDevice.purgeDependencyOnElmtId(rmElmtId);
+        this.__targetPower.purgeDependencyOnElmtId(rmElmtId);
+        this.__editingSceneId.purgeDependencyOnElmtId(rmElmtId);
+    }
+    aboutToBeDeleted() {
+        this.__sceneName.aboutToBeDeleted();
+        this.__conditionType.aboutToBeDeleted();
+        this.__conditionTime.aboutToBeDeleted();
+        this.__devices.aboutToBeDeleted();
+        this.__selectedDevice.aboutToBeDeleted();
+        this.__targetPower.aboutToBeDeleted();
+        this.__editingSceneId.aboutToBeDeleted();
+        SubscriberManager.Get().delete(this.id__());
+        this.aboutToBeDeletedInternal();
+    }
+    get sceneName() {
+        return this.__sceneName.get();
+    }
+    set sceneName(newValue) {
+        this.__sceneName.set(newValue);
+    }
+    get conditionType() {
+        return this.__conditionType.get();
+    }
+    set conditionType(newValue) {
+        this.__conditionType.set(newValue);
+    }
+    get conditionTime() {
+        return this.__conditionTime.get();
+    }
+    set conditionTime(newValue) {
+        this.__conditionTime.set(newValue);
+    }
+    get devices() {
+        return this.__devices.get();
+    }
+    set devices(newValue) {
+        this.__devices.set(newValue);
+    }
+    get selectedDevice() {
+        return this.__selectedDevice.get();
+    }
+    set selectedDevice(newValue) {
+        this.__selectedDevice.set(newValue);
+    }
+    get targetPower() {
+        return this.__targetPower.get();
+    }
+    set targetPower(newValue) {
+        this.__targetPower.set(newValue);
+    }
+    get editingSceneId() {
+        return this.__editingSceneId.get();
+    }
+    set editingSceneId(newValue) {
+        this.__editingSceneId.set(newValue);
+    }
+    async aboutToAppear() {
+        this.devices = await ApiService.getDevices('');
+        const params = router.getParams();
+        this.editingSceneId = params['sceneId'] ?? '';
+        if (this.editingSceneId !== '') {
+            const scenes = await ApiService.getScenes('');
+            for (let i = 0; i < scenes.length; i++) {
+                const scene = scenes[i];
+                if (scene.sceneId === this.editingSceneId) {
+                    this.sceneName = scene.name;
+                    if (scene.conditions.length > 0) {
+                        this.conditionType = scene.conditions[0].type;
+                        const t = scene.conditions[0].time;
+                        this.conditionTime = t === undefined ? '22:00' : t;
+                    }
+                    if (scene.actions.length > 0) {
+                        const did = scene.actions[0].did;
+                        for (let j = 0; j < this.devices.length; j++) {
+                            if (this.devices[j].did === did) {
+                                this.selectedDevice = this.devices[j];
+                                break;
+                            }
+                        }
+                        const p = scene.actions[0].params;
+                        if (p.length > 0 && typeof p[0] === 'boolean') {
+                            this.targetPower = p[0];
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    async save() {
+        if (this.sceneName === '') {
+            promptAction.showToast({ message: 'è¯·è¾“å…¥åœºæ™¯åç§°' });
+            return;
+        }
+        let cond;
+        if (this.conditionType === 'time') {
+            cond = { type: 'time', time: this.conditionTime };
+        }
+        else {
+            cond = { type: 'manual' };
+        }
+        const conditions = [cond];
+        let actions = [];
+        if (this.selectedDevice !== null) {
+            const act = { did: this.selectedDevice.did, method: 'set_power', params: [this.targetPower] };
+            actions = [act];
+        }
+        const sceneId = this.editingSceneId === '' ? `scene_${Date.now()}` : this.editingSceneId;
+        const scene = {
+            sceneId: sceneId,
+            name: this.sceneName,
+            enabled: true,
+            conditions: conditions,
+            actions: actions
+        };
+        await ApiService.saveScene(scene);
+        promptAction.showToast({ message: 'åœºæ™¯å·²ä¿å­˜' });
+        router.back();
+    }
+    initialRender() {
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Column.create();
+            Column.width('100%');
+            Column.height('100%');
+            Column.backgroundColor('#F5F6F7');
+        }, Column);
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Row.create();
+            Row.width('100%');
+            Row.padding({ left: 16, right: 16, top: 14, bottom: 12 });
+        }, Row);
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Text.create('â†');
+            Text.fontSize(20);
+            Text.onClick(() => { router.back(); });
+        }, Text);
+        Text.pop();
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Text.create(this.editingSceneId === '' ? 'æ–°å»ºåœºæ™¯' : 'ç¼–è¾‘åœºæ™¯');
+            Text.fontSize(18);
+            Text.fontWeight(FontWeight.Medium);
+            Text.margin({ left: 12 });
+        }, Text);
+        Text.pop();
+        Row.pop();
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Scroll.create();
+            Scroll.layoutWeight(1);
+            Scroll.scrollBar(BarState.Off);
+        }, Scroll);
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Column.create();
+            Column.padding({ left: 16, right: 16, bottom: 20 });
+        }, Column);
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            // åœºæ™¯å
+            TextInput.create({ placeholder: 'åœºæ™¯åç§°', text: this.sceneName });
+            // åœºæ™¯å
+            TextInput.onChange((v) => { this.sceneName = v; });
+            // åœºæ™¯å
+            TextInput.height(48);
+            // åœºæ™¯å
+            TextInput.backgroundColor('#FFFFFF');
+            // åœºæ™¯å
+            TextInput.borderRadius(12);
+            // åœºæ™¯å
+            TextInput.margin({ bottom: 12 });
+        }, TextInput);
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            // è§¦å‘æ¡ä»¶
+            Text.create('è§¦å‘æ¡ä»¶');
+            // è§¦å‘æ¡ä»¶
+            Text.fontSize(14);
+            // è§¦å‘æ¡ä»¶
+            Text.fontColor('#999999');
+            // è§¦å‘æ¡ä»¶
+            Text.margin({ bottom: 8 });
+        }, Text);
+        // è§¦å‘æ¡ä»¶
+        Text.pop();
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Row.create();
+            Row.margin({ bottom: 12 });
+        }, Row);
+        this.ConditionChip.bind(this)('æ‰‹åŠ¨è§¦å‘', 'manual');
+        this.ConditionChip.bind(this)('å®šæ—¶', 'time');
+        Row.pop();
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            If.create();
+            if (this.conditionType === 'time') {
+                this.ifElseBranchUpdateFunction(0, () => {
+                    this.observeComponentCreation2((elmtId, isInitialRender) => {
+                        TextInput.create({ placeholder: 'HH:mm', text: this.conditionTime });
+                        TextInput.onChange((v) => { this.conditionTime = v; });
+                        TextInput.height(48);
+                        TextInput.backgroundColor('#FFFFFF');
+                        TextInput.borderRadius(12);
+                        TextInput.margin({ bottom: 12 });
+                    }, TextInput);
+                });
+            }
+            // æ‰§è¡ŒåŠ¨ä½œï¼šé€‰æ‹©è®¾å¤‡
+            else {
+                this.ifElseBranchUpdateFunction(1, () => {
+                });
+            }
+        }, If);
+        If.pop();
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            // æ‰§è¡ŒåŠ¨ä½œï¼šé€‰æ‹©è®¾å¤‡
+            Text.create('æ‰§è¡ŒåŠ¨ä½œï¼ˆé€‰æ‹©è®¾å¤‡ï¼‰');
+            // æ‰§è¡ŒåŠ¨ä½œï¼šé€‰æ‹©è®¾å¤‡
+            Text.fontSize(14);
+            // æ‰§è¡ŒåŠ¨ä½œï¼šé€‰æ‹©è®¾å¤‡
+            Text.fontColor('#999999');
+            // æ‰§è¡ŒåŠ¨ä½œï¼šé€‰æ‹©è®¾å¤‡
+            Text.margin({ bottom: 8 });
+        }, Text);
+        // æ‰§è¡ŒåŠ¨ä½œï¼šé€‰æ‹©è®¾å¤‡
+        Text.pop();
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            ForEach.create();
+            const forEachItemGenFunction = _item => {
+                const device = _item;
+                this.observeComponentCreation2((elmtId, isInitialRender) => {
+                    Row.create();
+                    Row.width('100%');
+                    Row.padding(14);
+                    Row.backgroundColor('#FFFFFF');
+                    Row.borderRadius(12);
+                    Row.margin({ bottom: 10 });
+                    Row.onClick(() => { this.selectedDevice = device; });
+                }, Row);
+                this.observeComponentCreation2((elmtId, isInitialRender) => {
+                    Text.create(device.name);
+                    Text.fontSize(15);
+                    Text.fontColor('#333333');
+                    Text.layoutWeight(1);
+                }, Text);
+                Text.pop();
+                this.observeComponentCreation2((elmtId, isInitialRender) => {
+                    If.create();
+                    if (this.isSelected(device)) {
+                        this.ifElseBranchUpdateFunction(0, () => {
+                            this.observeComponentCreation2((elmtId, isInitialRender) => {
+                                Text.create('âœ“');
+                                Text.fontSize(18);
+                                Text.fontColor('#1677FF');
+                            }, Text);
+                            Text.pop();
+                        });
+                    }
+                    else {
+                        this.ifElseBranchUpdateFunction(1, () => {
+                        });
+                    }
+                }, If);
+                If.pop();
+                Row.pop();
+            };
+            this.forEachUpdateFunction(elmtId, this.controllableDevices(), forEachItemGenFunction);
+        }, ForEach);
+        ForEach.pop();
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            If.create();
+            if (this.selectedDevice !== null) {
+                this.ifElseBranchUpdateFunction(0, () => {
+                    this.observeComponentCreation2((elmtId, isInitialRender) => {
+                        Row.create();
+                        Row.width('100%');
+                        Row.padding(14);
+                        Row.backgroundColor('#FFFFFF');
+                        Row.borderRadius(12);
+                        Row.margin({ bottom: 12 });
+                    }, Row);
+                    this.observeComponentCreation2((elmtId, isInitialRender) => {
+                        Text.create('åŠ¨ä½œï¼šæ‰“å¼€/å…³é—­');
+                        Text.fontSize(14);
+                        Text.fontColor('#333333');
+                        Text.layoutWeight(1);
+                    }, Text);
+                    Text.pop();
+                    this.observeComponentCreation2((elmtId, isInitialRender) => {
+                        Toggle.create({ type: ToggleType.Switch, isOn: this.targetPower });
+                        Toggle.selectedColor('#1677FF');
+                        Toggle.onChange((isOn) => { this.targetPower = isOn; });
+                    }, Toggle);
+                    Toggle.pop();
+                    Row.pop();
+                });
+            }
+            else {
+                this.ifElseBranchUpdateFunction(1, () => {
+                });
+            }
+        }, If);
+        If.pop();
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Button.createWithLabel('ä¿å­˜åœºæ™¯');
+            Button.width('100%');
+            Button.height(48);
+            Button.backgroundColor('#1677FF');
+            Button.fontColor('#FFFFFF');
+            Button.onClick(() => { this.save(); });
+        }, Button);
+        Button.pop();
+        Column.pop();
+        Scroll.pop();
+        Column.pop();
+    }
+    ConditionChip(label, type, parent = null) {
+        this.observeComponentCreation2((elmtId, isInitialRender) => {
+            Text.create(label);
+            Text.fontSize(14);
+            Text.fontColor(this.conditionType === type ? '#FFFFFF' : '#333333');
+            Text.padding({ left: 16, right: 16, top: 8, bottom: 8 });
+            Text.backgroundColor(this.conditionType === type ? '#1677FF' : '#F2F3F5');
+            Text.borderRadius(16);
+            Text.margin({ right: 8 });
+            Text.onClick(() => { this.conditionType = type; });
+        }, Text);
+        Text.pop();
+    }
+    controllableDevices() {
+        const result = [];
+        for (let i = 0; i < this.devices.length; i++) {
+            const d = this.devices[i];
+            if (d.type === 'switch' || d.type === 'light' || d.type === 'air_conditioner') {
+                result.push(d);
+            }
+        }
+        return result;
+    }
+    isSelected(device) {
+        if (this.selectedDevice === null) {
+            return false;
+        }
+        return this.selectedDevice.did === device.did;
+    }
+    rerender() {
+        this.updateDirtyElements();
+    }
+    static getEntryName() {
+        return "SceneEdit";
+    }
+}
+registerNamedRoute(() => new SceneEdit(undefined, {}), "", { bundleName: "com.mijia.hm", moduleName: "entry", pagePath: "pages/SceneEdit", pageFullPath: "entry/src/main/ets/pages/SceneEdit", integratedHsp: "false", moduleType: "followWithHap" });
+//# sourceMappingURL=SceneEdit.js.mapÂ“Ùf hvigor_ignore_D:_Program Files_Huawei_DevEco Studio_sdk_default_openharmony_ets_api_@ohos.router.d.tsÙl hvigor_ignore_D:_Program Files_Huawei_DevEco Studio_sdk_default_openharmony_ets_api_@ohos.promptAction.d.tsÙ`C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm\entry\src\main\ets\service\ApiService.etsÙ]C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm\entry\src\main\ets\pages\SceneEdit.etsÔrB›ªmoduleName±isLocalDependency¯isNodeEntryFile§pkgPath±belongProjectPath§pkgNameªpkgVersion±dependencyPkgInfo°belongModulePath§checker¬shouldEmitJs¥entryÃÂÙ<C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm\entryÙ6C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm¥entry¥1.0.0Ô  Ù<C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm\entryÔrCÜ ®¬getNodeCount²getIdentifierCount®getSymbolCount¬getTypeCountµgetInstantiationCountµgetRelationCacheSizes±isUndefinedSymbol±isArgumentsSymbol¯isUnknownSymbol¯getMergedSymbol®getDiagnostics´getGlobalDiagnostics´getRecursionIdentity¶getUnmatchedProperties¹getTypeOfSymbolAtLocation¯getTypeOfSymbolÙ(getSymbolsOfParameterPropertyDeclaration·getDeclaredTypeOfSymbol³getPropertiesOfType±getPropertyOfTypeÙ"getPrivateIdentifierPropertyOfType·getTypeOfPropertyOfType²getIndexInfoOfType³getIndexInfosOfTypeºgetIndexInfosOfIndexSymbol³getSignaturesOfType²getIndexTypeOfType¬getIndexType¬getBaseTypes¸getBaseTypeOfLiteralType®getWidenedType³getTypeFromTypeNode°getParameterTypeÙ$getParameterIdentifierNameAtPosition¸getPromisedTypeOfPromise®getAwaitedType¸getReturnTypeOfSignature®isNullableType¯getNullableType²getNonNullableType²getNonOptionalType°getTypeArguments®typeToTypeNodeÙ$indexInfoToIndexSignatureDeclaration¿signatureToSignatureDeclaration²symbolToEntityName²symbolToExpression¬symbolToNodeÙ!symbolToTypeParameterDeclarations¼symbolToParameterDeclarationºtypeParameterToDeclaration±getSymbolsInScope³getSymbolAtLocation·getIndexInfosAtLocationÙ!getShorthandAssignmentValueSymbolÙ#getExportSpecifierLocalTargetSymbol·getExportSymbolOfSymbol±getTypeAtLocationºgetTypeAtLocationForLinterÙ tryGetTypeAtLocationWithoutCheckºgetTypeOfAssignmentPatternÙ*getPropertySymbolOfDestructuringAssignment±signatureToString¬typeToString®symbolToStringµtypePredicateToString®writeSignature©writeType«writeSymbol²writeTypePredicate¼getAugmentedPropertiesOfType®getRootSymbols²getSymbolOfExpando±getContextualTypeÙ(getContextualTypeForObjectLiteralElementÙ#getContextualTypeForArgumentAtIndexÙ getContextualTypeForJsxAttribute²isContextSensitiveÙ!getTypeOfPropertyOfContextualTypeµgetFullyQualifiedNameÙ#tryGetResolvedSignatureWithoutCheck´getResolvedSignatureÙ/getResolvedSignatureForStringLiteralCompletionsÙ$getResolvedSignatureForSignatureHelpµgetExpandedParameters¹hasEffectiveRestParameterºcontainsArgumentsReference°getConstantValueµisValidPropertyAccessÙ#isValidPropertyAccessForCompletions»getSignatureFromDeclarationºisImplementationOfOverload¹getImmediateAliasedSymbol°getAliasedSymbol¯getEmitResolver²getExportsOfModule¿getExportsAndPropertiesOfModuleÙ forEachExportAndPropertyOfModule¯getSymbolWalker±getAmbientModules¹getJsxIntrinsicTagNamesAt³isOptionalParameter»tryGetMemberInModuleExportsÙ(tryGetMemberInModuleExportsAndProperties´tryFindAmbientModuleÙ(tryFindAmbientModuleWithoutAugmentations¯getApparentType¬getUnionType²isTypeAssignableTo³createAnonymousType¯createSignature¬createSymbol¯createIndexInfoªgetAnyType­getStringType­getNumberType±createPromiseType¯createArrayType¹getElementTypeOfArrayType®getBooleanType¬getFalseType«getTrueType«getVoidType°getUndefinedType«getNullType¯getESSymbolType¬getNeverType¯getOptionalType®getPromiseType²getPromiseLikeType´getAsyncIterableType²isSymbolAccessible«isArrayType«isTupleType¯isArrayLikeTypeÙ#isTypeInvalidDueToUnionDiscriminantºgetExactOptionalProperties¿getAllPossiblePropertiesOfTypesÙ(getSuggestedSymbolForNonexistentPropertyÙ#getSuggestionForNonexistentPropertyÙ,getSuggestedSymbolForNonexistentJSXAttributeÙ&getSuggestedSymbolForNonexistentSymbolÙ!getSuggestionForNonexistentSymbolÙ&getSuggestedSymbolForNonexistentModuleÙ!getSuggestionForNonexistentExportÙ+getSuggestedSymbolForNonexistentClassMember·getBaseConstraintOfType»getDefaultFromTypeParameter«resolveName¯getJsxNamespaceµgetJsxFragmentFactory¸getAccessibleSymbolChain»getTypePredicateOfSignature¹resolveExternalModuleName»resolveExternalModuleSymbol°tryGetThisTypeAt¹getTypeArgumentConstraint¸getSuggestionDiagnostics¸runWithCancellationTokenÙ3getLocalTypeParametersOfClassOrInterfaceOrTypeAlias´isDeclarationVisible´isPropertyAccessible»getTypeOnlyAliasDeclaration¿getMemberOverrideModifierStatusÙ!isTypeParameterPossiblyReferenced²getConstEnumRelate´clearConstEnumRelateµdeleteConstEnumRelateÙ$getTypeArgumentsForResolvedSignatureµgetCheckedSourceFilesÙ"collectHaveTsNoCheckFilesForLinter·clearQualifiedNameCache®isStaticRecord²isStaticSourceFileÔ  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  ÃÃÚìimport { router, promptAction } from '@kit.ArkUI';
+import * as ApiService from '../service/ApiService';
+import { Scene, Device, SceneCondition, SceneAction } from '../model/Models';
+
+/**
+ * åœºæ™¯ç¼–è¾‘é¡µï¼šé…ç½®è§¦å‘æ¡ä»¶ + æ‰§è¡ŒåŠ¨ä½œã€‚
+ * åœºæ™¯æœ¬åœ°çœŸå®å­˜å‚¨ï¼Œæ‰§è¡Œæ—¶é€šè¿‡ miIO/ç±³å®¶äº‘çœŸå®æ§åˆ¶è®¾å¤‡ã€‚
+ */
+@Entry
+@Component
+struct SceneEdit {
+  @State sceneName: string = '';
+  @State conditionType: string = 'manual';
+  @State conditionTime: string = '22:00';
+  @State devices: Device[] = [];
+  @State selectedDevice: Device | null = null;
+  @State targetPower: boolean = true;
+  @State editingSceneId: string = '';
+
+  async aboutToAppear(): Promise<void> {
+    this.devices = await ApiService.getDevices('');
+    const params = router.getParams() as Record<string, string>;
+    this.editingSceneId = params['sceneId'] ?? '';
+    if (this.editingSceneId !== '') {
+      const scenes = await ApiService.getScenes('');
+      for (let i = 0; i < scenes.length; i++) {
+        const scene = scenes[i];
+        if (scene.sceneId === this.editingSceneId) {
+          this.sceneName = scene.name;
+          if (scene.conditions.length > 0) {
+            this.conditionType = scene.conditions[0].type;
+            const t = scene.conditions[0].time;
+            this.conditionTime = t === undefined ? '22:00' : t;
+          }
+          if (scene.actions.length > 0) {
+            const did = scene.actions[0].did;
+            for (let j = 0; j < this.devices.length; j++) {
+              if (this.devices[j].did === did) {
+                this.selectedDevice = this.devices[j];
+                break;
+              }
+            }
+            const p = scene.actions[0].params;
+            if (p.length > 0 && typeof p[0] === 'boolean') {
+              this.targetPower = p[0] as boolean;
+            }
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  async save(): Promise<void> {
+    if (this.sceneName === '') {
+      promptAction.showToast({ message: 'è¯·è¾“å…¥åœºæ™¯åç§°' });
+      return;
+    }
+    let cond: SceneCondition;
+    if (this.conditionType === 'time') {
+      cond = { type: 'time', time: this.conditionTime };
+    } else {
+      cond = { type: 'manual' };
+    }
+    const conditions: SceneCondition[] = [cond];
+    let actions: SceneAction[] = [];
+    if (this.selectedDevice !== null) {
+      const act: SceneAction = { did: this.selectedDevice.did, method: 'set_power', params: [this.targetPower] };
+      actions = [act];
+    }
+    const sceneId = this.editingSceneId === '' ? `scene_${Date.now()}` : this.editingSceneId;
+    const scene: Scene = {
+      sceneId: sceneId,
+      name: this.sceneName,
+      enabled: true,
+      conditions: conditions,
+      actions: actions
+    };
+    await ApiService.saveScene(scene);
+    promptAction.showToast({ message: 'åœºæ™¯å·²ä¿å­˜' });
+    router.back();
+  }
+
+  build() {
+    Column() {
+      Row() {
+        Text('â†')
+          .fontSize(20)
+          .onClick(() => { router.back(); })
+        Text(this.editingSceneId === '' ? 'æ–°å»ºåœºæ™¯' : 'ç¼–è¾‘åœºæ™¯')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .margin({ left: 12 })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 14, bottom: 12 })
+
+      Scroll() {
+        Column() {
+          // åœºæ™¯å
+          TextInput({ placeholder: 'åœºæ™¯åç§°', text: this.sceneName })
+            .onChange((v: string) => { this.sceneName = v; })
+            .height(48)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(12)
+            .margin({ bottom: 12 })
+
+          // è§¦å‘æ¡ä»¶
+          Text('è§¦å‘æ¡ä»¶')
+            .fontSize(14)
+            .fontColor('#999999')
+            .margin({ bottom: 8 })
+          Row() {
+            this.ConditionChip('æ‰‹åŠ¨è§¦å‘', 'manual')
+            this.ConditionChip('å®šæ—¶', 'time')
+          }
+          .margin({ bottom: 12 })
+
+          if (this.conditionType === 'time') {
+            TextInput({ placeholder: 'HH:mm', text: this.conditionTime })
+              .onChange((v: string) => { this.conditionTime = v; })
+              .height(48)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(12)
+              .margin({ bottom: 12 })
+          }
+
+          // æ‰§è¡ŒåŠ¨ä½œï¼šé€‰æ‹©è®¾å¤‡
+          Text('æ‰§è¡ŒåŠ¨ä½œï¼ˆé€‰æ‹©è®¾å¤‡ï¼‰')
+            .fontSize(14)
+            .fontColor('#999999')
+            .margin({ bottom: 8 })
+          ForEach(this.controllableDevices(), (device: Device) => {
+            Row() {
+              Text(device.name)
+                .fontSize(15)
+                .fontColor('#333333')
+                .layoutWeight(1)
+              if (this.isSelected(device)) {
+                Text('âœ“').fontSize(18).fontColor('#1677FF')
+              }
+            }
+            .width('100%')
+            .padding(14)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(12)
+            .margin({ bottom: 10 })
+            .onClick(() => { this.selectedDevice = device; })
+          })
+
+          if (this.selectedDevice !== null) {
+            Row() {
+              Text('åŠ¨ä½œï¼šæ‰“å¼€/å…³é—­')
+                .fontSize(14)
+                .fontColor('#333333')
+                .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.targetPower })
+                .selectedColor('#1677FF')
+                .onChange((isOn: boolean) => { this.targetPower = isOn; })
+            }
+            .width('100%')
+            .padding(14)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(12)
+            .margin({ bottom: 12 })
+          }
+
+          Button('ä¿å­˜åœºæ™¯')
+            .width('100%')
+            .height(48)
+            .backgroundColor('#1677FF')
+            .fontColor('#FFFFFF')
+            .onClick(() => { this.save(); })
+        }
+        .padding({ left: 16, right: 16, bottom: 20 })
+      }
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#F5F6F7')
+  }
+
+  @Builder
+  ConditionChip(label: string, type: string) {
+    Text(label)
+      .fontSize(14)
+      .fontColor(this.conditionType === type ? '#FFFFFF' : '#333333')
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .backgroundColor(this.conditionType === type ? '#1677FF' : '#F2F3F5')
+      .borderRadius(16)
+      .margin({ right: 8 })
+      .onClick(() => { this.conditionType = type; })
+  }
+
+  controllableDevices(): Device[] {
+    const result: Device[] = [];
+    for (let i = 0; i < this.devices.length; i++) {
+      const d = this.devices[i];
+      if (d.type === 'switch' || d.type === 'light' || d.type === 'air_conditioner') {
+        result.push(d);
+      }
+    }
+    return result;
+  }
+
+  isSelected(device: Device): boolean {
+    if (this.selectedDevice === null) {
+      return false;
+    }
+    return this.selectedDevice.did === device.did;
+  }
+}
+ÀÔrD“¬@ohos.router²@ohos.promptActionµ../service/ApiServiceÔrE—ªassertions¨external¢id¤meta±moduleSideEffectsªresolvedByµsyntheticNamedExportsAÃÙf hvigor_ignore_D:_Program Files_Huawei_DevEco Studio_sdk_default_openharmony_ets_api_@ohos.router.d.tsAÃªoh-resolveÂEAÃÙl hvigor_ignore_D:_Program Files_Huawei_DevEco Studio_sdk_default_openharmony_ets_api_@ohos.promptAction.d.tsAÃªoh-resolveÂEAÂÙ`C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm\entry\src\main\ets\service\ApiService.etsAÃªoh-resolveÂ“ÔrF–§version¤fileªsourceRoot§sources¥names¨mappings¬SceneEdit.js ‘­SceneEdit.etsÜˆ–”    ”  	”  ”  %”!  1”"  2–”    ”  ”  ”  %”-  1”.  2—”   ” ” ” ” ”3 3”4 4’” 
+” 
+‘”  ’”8 ”: ’”< !”ÌD )’”< !”ÌC (’”6 ”8 ’”= )”ÌA -’”:  ”> $’”= "”? $‘” ÌM’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ’” 	” ”” ”	 ”
+ ” ” ” ” 	” ” ” ”' #”( $”2 .”3 /”5 1”6 2”7 3™” ” 
+” ” ” ” ”' #”) ?”* Ì@œ” ” ” 	” ” ”$  ”% !”. *”/ +”3 /”5 1”6 2˜” ” ” ” ” ”$  ”& "”( $œ” ” ” ” ”! ”+ %”, &”5 /”6 0”8 2”9 3”: 4Ü ” ” ” ” ” ” ” ” ”  ”&  ”' !”- '”/ )”0 *”2 ,”4 .™” ” ” ” ”$ ”% ”& ”' ”(  š” ” ” ” ”! ”& ”* "”+ #”9 1”; 3™” 
+” ” ”" ”% ”*  ”+ !”/ %”0 &š” 
+” ” ” ”( ”) ”/ %”2 (”3 )”5 +” ” ” ”* ”- !”2 &”3 '”= 1”> 2”? 3”Ì@ 4”ÌA 5”ÌE 9”ÌF :” ” ” ”" ”' ”( ”2 &”3 '”4 (”5 )”6 *”: .”; /Ü ”  ”  ”  ”*  ”-  !”.  "”3  '”<  0”=  1”>  2”?  3”ÌF  :”ÌG  ;”ÌH  <”ÌI  =”ÌJ  >”ÌK  ?‘” !š” "
+” "” "” "”% "”& "”, ""”/ "%”0 "&”2 "(” #” #”! #”$ #”) #”* #”1 #%”2 #&”3 #'”4 #(”5 #)”8 #,”9 #-Ü ” $” $”! $”" $”% $”& $”( $”) $”, $ ”0 $$”1 $%”8 $,”9 $-”? $3”ÌA $5”ÌB $6”ÌD $8”ÌF $:” %”  %”$ %”% %”, %”- %”. % ”/ %!”0 %"”3 %%”8 %*”; %-”= %/œ”  &”$ &”% &”3 &#”6 &&”: &*”; &+”ÌB &2”ÌC &3”ÌD &4”ÌE &5”ÌF &6’”  '”& '‘” (‘” )” *” *” *”" *”' *”( *”/ *#”0 *$”1 *%”2 *&”3 *'”9 *-”: *.Ü ” +” +” +” +”$ +”' +”( +”, + ”3 +'”4 +(”5 +)”6 +*”7 ++”< +0”ÌE +9”ÌG +;š” ,”  ,”! ,”, ,”/ ,!”0 ,"”1 ,#”2 ,$”3 ,0”4 ,1‘” -‘” .’” /
+” /‘” 0	‘” 1‘”	 2’” 3” 3”” 5”	 5”
+ 5” 5˜” 6” 6” 6” 6” 6” 6”! 6”# 6œ” 7” 7” 7”" 7”# 7”% 7”, 7&”. 7(”7 71”9 73”: 74”; 75’” 8” 8‘”	 9”” :” :” :” :˜” ;” ;” ;” ;” ;”# ;”) ;%”+ ;'Ÿ” <” <
+” <” <” <” <”! <”# <”' <!”) <#”- <'”. <(”; <5”= <7”> <8‘”	 =‘” =™” >” >
+” >” >” >” >”# >”% >”& > ‘”	 ?˜” Ì@” Ì@
+” Ì@” Ì@)” Ì@*”  Ì@.”! Ì@/”" Ì@0–” ÌA” ÌA” ÌA” ÌA!” ÌA#” ÌA$˜” ÌB” ÌB” ÌB” ÌB” ÌB”$ ÌB ”( ÌB$”* ÌB&Ü ” ÌC” ÌC” ÌC” ÌC” ÌC!” ÌC$” ÌC&”# ÌC*”$ ÌC+”2 ÌC9”3 ÌC:”6 ÌC=”8 ÌC?”> ÌCÌE”Ì@ ÌCÌG”ÌK ÌCÌR”ÌM ÌCÌT”ÌS ÌCÌZ”ÌU ÌCÌ\”ÌV ÌCÌ]”ÌZ ÌCÌa”Ì[ ÌCÌb”Ìf ÌCÌm”Ìg ÌCÌn”Ìi ÌCÌp”Ìj ÌCÌq—” ÌD” ÌD” ÌD” ÌD” ÌD” ÌD” ÌD‘”	 ÌEÜ ” ÌF” ÌF
+” ÌF” ÌF” ÌF” ÌF”+ ÌF'”0 ÌF,”2 ÌF.”3 ÌF/”4 ÌF0”5 ÌF1”> ÌF:”ÌB ÌF>”ÌC ÌF?”ÌF ÌFÌB”ÌH ÌFÌD”ÌJ ÌFÌF”ÌK ÌFÌG”ÌL ÌFÌH”ÌM ÌFÌI”ÌQ ÌFÌM”ÌR ÌFÌN”Ì` ÌFÌ\”Ìa ÌFÌ]”” ÌG” ÌG
+” ÌG” ÌG”” ÌH” ÌH” ÌH” ÌH–” ÌI” ÌI
+” ÌI” ÌI” ÌI”  ÌI”” ÌJ” ÌJ” ÌJ” ÌJ”” ÌK” ÌK” ÌK”" ÌK”” ÌL” ÌL” ÌL” ÌL’”	 ÌM”
+ ÌM™” ÌN” ÌN
+” ÌN” ÌN”" ÌN”# ÌN”( ÌN$”) ÌN%”* ÌN&œ” ÌO” ÌO” ÌO” ÌO” ÌO”! ÌO”( ÌO$”* ÌO&”1 ÌO-”3 ÌO/”4 ÌO0”5 ÌO1–” ÌP” ÌP
+” ÌP” ÌP” ÌP” ÌP’” ÌQ” ÌQ‘” ÌS’” ÌT” ÌT
+–” ÌT” ÌT
+” Ì³” Ì³
+” Ì³” Ì³–” ÌT” ÌT
+” Ì´” Ì´” Ì´”  Ì´–” ÌT” ÌT
+” Ìµ”" Ìµ”# Ìµ”, Ìµ’” ÌU” ÌU	–” ÌU” ÌU	” Ì^” Ì^” Ì^” Ì^Ü ” ÌU” ÌU	” Ì_” Ì_” Ì_” Ì_” Ì_”  Ì_”" Ì_”$ Ì_”) Ì_ ”+ Ì_"”- Ì_$”/ Ì_&”2 Ì_)”4 Ì_+”6 Ì_-”8 Ì_/”> Ì_5”Ì@ Ì_7”ÌB Ì_9”ÌD Ì_;”” ÌV” ÌV” ÌV” ÌV–” ÌV” ÌV” ÌW” ÌW” ÌW” ÌWŸ” ÌV” ÌV” ÌX” ÌX” ÌX” ÌX” ÌX”! ÌX”' ÌX!”( ÌX"”, ÌX&”. ÌX(”/ ÌX)”0 ÌX*”1 ÌX+’” ÌV” ÌVÜ ” ÌY” ÌY” ÌY” ÌY” ÌY”+ ÌY ”0 ÌY%”2 ÌY'”3 ÌY(”4 ÌY)”5 ÌY*”; ÌY0”< ÌY1”= ÌY2”> ÌY3”ÌD ÌY9–” ÌY” ÌY” ÌZ” ÌZ” ÌZ” ÌZ˜” ÌY” ÌY” Ì[” Ì[” Ì[”& Ì[ ”' Ì[!”- Ì['š” ÌY” ÌY” Ì\” Ì\” Ì\” Ì\” Ì\”  Ì\”" Ì\”$ Ì\’” ÌY” ÌY’” ÌU” ÌU	’” Ìa” Ìa–” Ìa” Ìa” Ì°” Ì°”  Ì°”! Ì°˜” Ìa” Ìa” Ì±” Ì±” Ì±”% Ì±”& Ì±”) Ì±’” Ìb” ÌbÜ ” Ìb” Ìb” Ì®	” Ì®” Ì®” Ì®”! Ì®”# Ì®”% Ì®”' Ì®”, Ì®"”. Ì®$”0 Ì®&”2 Ì®(”8 Ì®.”: Ì®0”< Ì®2”> Ì®4’” Ìc
+” Ìc” Ìd
+” Ìd” Ìd” Ìd”* Ìd!”, Ìd#”2 Ìd)”4 Ìd+”8 Ìd/”: Ìd1”> Ìd5”? Ìd6”ÌH Ìd?”ÌJ ÌdÌA’” Ìc
+” ÌcÜ ” Ìd
+” Ìd” Ìe” Ìe” Ìe”  Ìe”! Ìe ”# Ìe"”% Ìe$”( Ìe'”, Ìe+”- Ìe,”6 Ìe5”9 Ìe8”: Ìe9”; Ìe:”< Ìe;”= Ìe<’” Ìc
+” Ìc–” Ìd
+” Ìd” Ìf” Ìf” Ìf” Ìf’” Ìc
+” Ìc–” Ìd
+” Ìd” Ìg”% Ìg”& Ìg”/ Ìg&’” Ìc
+” Ìc–” Ìd
+” Ìd” Ìh”" Ìh”# Ìh”% Ìh’” Ìc
+” Ìcš” Ìd
+” Ìd” Ìi” Ìi” Ìi” Ìi”% Ìi”' Ìi”) Ìi ”+ Ìi"’” Ìk
+” Ìk”” Ìl
+” Ìl” Ìl” Ìl’” Ìk
+” Ìk–” Ìl
+” Ìl” Ìm” Ìm” Ìm” Ìm’” Ìk
+” Ìk–” Ìl
+” Ìl” Ìn” Ìn” Ìn”$ Ìn ’” Ìk
+” Ìkš” Ìl
+” Ìl” Ìo” Ìo” Ìo” Ìo”  Ìo”" Ìo”# Ìo”% Ìo!’” Ìk
+” Ìk’” Ìl
+” Ìl’” Ìp
+” Ìpš” Ìp
+” Ìp” Ìt” Ìt” Ìt” Ìt” Ìt”! Ìt”# Ìt”% Ìt ™” Ìq” Ìq” Ìq” Ìq”& Ìq”, Ìq%”. Ìq'”6 Ìq/”7 Ìq0™” Ìr” Ìr” Ìr” Ìr”& Ìr”* Ìr#”, Ìr%”2 Ìr+”3 Ìr,’” Ìp
+” Ìp˜” Ìv
+” Ìv” Ìv” Ìv”" Ìv ”' Ìv%”- Ìv+”/ Ìv-” Ìw”! Ìw”) Ìw”+ Ìw”6 Ìw#”8 Ìw%”? Ìw,”ÌA Ìw.”ÌE Ìw2”ÌG Ìw4”ÌK Ìw8”ÌL Ìw9”ÌY ÌwÌF”Ì[ ÌwÌHÜ ” Ìw”! Ìw”" Ìx”* Ìx”+ Ìx”, Ìx”- Ìx"”/ Ìx$”1 Ìx&”4 Ìx)”8 Ìx-”9 Ìx.”ÌF Ìx;”ÌI Ìx>”ÌJ Ìx?”ÌK ÌxÌ@”ÌL ÌxÌA”ÌM ÌxÌB–” Ìw”! Ìw”" Ìy”( Ìy”) Ìy”+ Ìy–” Ìw”! Ìw”" Ìz”1 Ìz”2 Ìz”; Ìz(–” Ìw”! Ìw”" Ì{”. Ì{”/ Ì{”1 Ì{š” Ìw”! Ìw”" Ì|”( Ì|”) Ì|”+ Ì|”1 Ì|”3 Ì| ”5 Ì|"”7 Ì|$‘” Ì}’” Ì
+” Ì‘” Ì}’” Ì
+” Ì”” Ì€
+” Ì€” Ì€”$ Ì€’” Ì
+” Ì–” Ì€
+” Ì€” Ì” Ì” Ì” Ì’” Ì
+” Ì–” Ì€
+” Ì€” Ì‚” Ì‚” Ì‚”$ Ì‚ ’” Ì
+” Ìš” Ì€
+” Ì€” Ìƒ” Ìƒ” Ìƒ” Ìƒ”  Ìƒ”" Ìƒ”# Ìƒ”% Ìƒ!’” Ì
+” Ì’” Ì€
+” Ì€’” Ì„
+” Ì„’” Ì…” Ì…–” Ì…” Ì…” Ì” Ì” Ì”$ Ì–” Ì…” Ì…” Ì” Ì”  Ì”" Ì–” Ì…” Ì…” Ì”' Ì”( Ì”1 Ì&–” Ì…” Ì…” Ì‘”$ Ì‘”% Ì‘”' Ì‘š” Ì…” Ì…” Ì’” Ì’” Ì’”! Ì’”' Ì’”) Ì’”+ Ì’ ”- Ì’"Ü ” Ì…” Ì…” Ì“” Ì“”  Ì“”# Ì“”% Ì“”( Ì“”, Ì“!”- Ì“"”; Ì“0”> Ì“3”ÌD Ì“9”ÌE Ì“:”ÌF Ì“;”ÌG Ì“<–” Ì†” Ì†”  Ì†”& Ì†”' Ì†”+ Ì†–” Ì†” Ì†” Ì‡”! Ì‡”" Ì‡”$ Ì‡–” Ì†” Ì†” Ìˆ”" Ìˆ”# Ìˆ”, Ìˆ$–” Ì†” Ì†” Ì‰”% Ì‰”& Ì‰”' Ì‰’” Ì†” Ì†™” ÌŠ” ÌŠ” ÌŠ” ÌŠ”' ÌŠ!”( ÌŠ"”. ÌŠ(”/ ÌŠ)”1 ÌŠ+””  Ì‹”$ Ì‹”, Ì‹”/ Ì‹–”  Ì‹”$ Ì‹”% Ì‹”- Ì‹"”. Ì‹#”0 Ì‹%–”  Ì‹”$ Ì‹”% Ì‹'”. Ì‹0”/ Ì‹1”8 Ì‹:’” Ì‹”  Ì‹‘” ÌŒ‘” ÌŒ’” Ì…” Ì…•”/ Ì„”3 Ì„”4 Ì„”ÌG Ì„*”ÌI Ì„,’” Ì„
+” Ì„˜” Ì–
+” Ì–” Ì–” Ì–”# Ì–!”( Ì–&”, Ì–*”. Ì–,’” Ì—” Ì—–” Ì—” Ì—” Ì ”! Ì ”" Ì ”( Ì –” Ì—” Ì—” Ì¡”# Ì¡”$ Ì¡”& Ì¡–” Ì—” Ì—” Ì¢”+ Ì¢”, Ì¢”5 Ì¢&–” Ì—” Ì—” Ì£”( Ì£”) Ì£”+ Ì£š” Ì—” Ì—” Ì¤”" Ì¤”# Ì¤”% Ì¤”+ Ì¤”- Ì¤”/ Ì¤ ”1 Ì¤"”” Ì˜” Ì˜”$ Ì˜”. Ì˜–” Ì˜” Ì˜” Ì™”% Ì™”& Ì™”( Ì™–” Ì˜” Ì˜” Ìš”& Ìš”' Ìš”0 Ìš$–” Ì˜” Ì˜” Ì›”) Ì›”* Ì›”+ Ì›’” Ì˜” Ì˜Ü ” Ìœ” Ìœ”& Ìœ”( Ìœ”, Ìœ”. Ìœ”8 Ìœ'”9 Ìœ(”? Ìœ.”ÌA Ìœ0”ÌE Ìœ4”ÌG Ìœ6”ÌK Ìœ:”ÌL Ìœ;”ÌW ÌœÌF”ÌY ÌœÌH–” Ìœ” Ìœ” Ì”, Ì”- Ì”6 Ì(Ü ” Ìœ” Ìœ” Ì”' Ì”( Ì”) Ì”- Ì(”/ Ì*”1 Ì,”4 Ì/”8 Ì3”9 Ì4”ÌD Ì?”ÌG ÌÌB”ÌK ÌÌF”ÌL ÌÌG”ÌM ÌÌH”ÌN ÌÌI’” Ìœ” Ìœ’” Ì—” Ì—‘” Ì¥‘” Ì¥”” Ì§
+” Ì§”# Ì§”) Ì§–” Ì§
+” Ì§” Ì¨” Ì¨” Ì¨” Ì¨–” Ì§
+” Ì§” Ì©” Ì©” Ì©” Ì©–” Ì§
+” Ì§” Ìª”" Ìª”# Ìª”, Ìª&–” Ì§
+” Ì§” Ì«” Ì«” Ì«”& Ì« Ÿ” Ì§
+” Ì§” Ì¬” Ì¬” Ì¬” Ì¬”  Ì¬”# Ì¬”' Ì¬!”( Ì¬"”, Ì¬&”. Ì¬(”/ Ì¬)”0 Ì¬*”1 Ì¬+’” Ì§
+” Ì§’” Ìb” Ìb’” Ìa” Ìa’” ÌT” ÌT
+‘” Ì¶–” Ì¹” Ì¹” Ì¹” Ì¹” Ì¹” Ì¹+”” Ìº” Ìº” Ìº	” Ìº–” Ìº” Ìº” Ì»” Ì»” Ì»” Ì»Ü ” Ìº” Ìº” Ì¼” Ì¼” Ì¼” Ì¼”  Ì¼”- Ì¼#”2 Ì¼(”6 Ì¼,”7 Ì¼-”8 Ì¼.”9 Ì¼/”ÌB Ì¼8”ÌC Ì¼9”ÌD Ì¼:”ÌE Ì¼;”ÌN Ì¼ÌDÜ ” Ìº” Ìº” Ì½” Ì½” Ì½” Ì½” Ì½”! Ì½”# Ì½”% Ì½”* Ì½ ”, Ì½"”. Ì½$”0 Ì½&”3 Ì½)”5 Ì½+”6 Ì½,”8 Ì½.”> Ì½4”Ì@ Ì½6”ÌA Ì½7”ÌC Ì½9Ü ” Ìº” Ìº” Ì¾”  Ì¾”! Ì¾”% Ì¾”& Ì¾”3 Ì¾)”8 Ì¾.”< Ì¾2”= Ì¾3”> Ì¾4”? Ì¾5”ÌH Ì¾>”ÌI Ì¾?”ÌJ Ì¾Ì@”ÌK Ì¾ÌA”ÌT Ì¾ÌJ–” Ìº” Ìº” Ì¿” Ì¿” Ì¿”  Ì¿š” Ìº” Ìº” ÌÀ” ÌÀ” ÌÀ” ÌÀ” ÌÀ”! ÌÀ”" ÌÀ”$ ÌÀÜ ” Ìº” Ìº” ÌÁ” ÌÁ” ÌÁ” ÌÁ” ÌÁ”! ÌÁ”% ÌÁ”& ÌÁ”3 ÌÁ)”6 ÌÁ,”: ÌÁ0”; ÌÁ1”< ÌÁ2”= ÌÁ3’” Ìº” Ìº‘” ÌÂ’” ÌÄ” ÌÄ–” ÌÅ” ÌÅ
+” ÌÅ” ÌÅ” ÌÅ” ÌÅ Ü ” ÌÆ” ÌÆ	” ÌÆ” ÌÆ” ÌÆ” ÌÆ” ÌÆ” ÌÆ” ÌÆ”  ÌÆ”! ÌÆ”( ÌÆ$”) ÌÆ%”/ ÌÆ+”1 ÌÆ-”2 ÌÆ.”4 ÌÆ0”6 ÌÆ2›” ÌÇ” ÌÇ” ÌÇ” ÌÇ” ÌÇ” ÌÇ”" ÌÇ”# ÌÇ”$ ÌÇ”% ÌÇ”& ÌÇ Ü ” ÌÈ” ÌÈ
+” ÌÈ” ÌÈ” ÌÈ” ÌÈ”# ÌÈ”' ÌÈ!”( ÌÈ"”) ÌÈ#”- ÌÈ'”2 ÌÈ,”9 ÌÈ3”= ÌÈ7”> ÌÈ8”? ÌÈ9”ÌC ÌÈ=”ÌH ÌÈÌB”ÌY ÌÈÌS”Ì[ ÌÈÌU˜” ÌÉ” ÌÉ” ÌÉ” ÌÉ” ÌÉ” ÌÉ” ÌÉ” ÌÉ‘” ÌÊ‘”	 ÌË”” ÌÌ” ÌÌ” ÌÌ” ÌÌ’” ÌÍ” ÌÍ”” ÌÏ” ÌÏ” ÌÏ” ÌÏ˜” ÌĞ” ÌĞ” ÌĞ” ÌĞ” ÌĞ”$ ÌĞ ”( ÌĞ$”* ÌĞ&”” ÌÑ” ÌÑ” ÌÑ” ÌÑ‘”	 ÌÒœ” ÌÓ” ÌÓ” ÌÓ” ÌÓ”" ÌÓ”# ÌÓ”& ÌÓ"”+ ÌÓ'”1 ÌÓ-”2 ÌÓ.”5 ÌÓ1”6 ÌÓ2’” ÌÔ” ÌÔÔrG–§version¤file§sources®sourcesContent¥names¨mappingsÀ‘À‘ÀÜ‘‘”    ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”  	 ‘”  
+ ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”    ‘”  ! ‘”  " ‘”  # ‘”  $ ‘”  % ‘”  & ‘”  ' ‘”  ( ‘”  ) ‘”  * ‘”  + ‘”  , ‘”  - ‘”  . ‘”  / ‘”  0 ‘”  1 ‘”  2 ‘”  3 ‘”  4 ‘”  5 ‘”  6 ‘”  7 ‘”  8 ‘”  9 ‘”  : ‘”  ; ‘”  < ‘”  = ‘”  > ‘”  ? ‘”  Ì@ ‘”  ÌA ‘”  ÌB ‘”  ÌC ‘”  ÌD ‘”  ÌE ‘”  ÌF ‘”  ÌG ‘”  ÌH ‘”  ÌI ‘”  ÌJ ‘”  ÌK ‘”  ÌL ‘”  ÌM ‘”  ÌN ‘”  ÌO ‘”  ÌP ‘”  ÌQ ‘”  ÌR ‘”  ÌS ‘”  ÌT ‘”  ÌU ‘”  ÌV ‘”  ÌW ‘”  ÌX ‘”  ÌY ‘”  ÌZ ‘”  Ì[ ‘”  Ì\ ‘”  Ì] ‘”  Ì^ ‘”  Ì_ ‘”  Ì` ‘”  Ìa ‘”  Ìb ‘”  Ìc ‘”  Ìd ‘”  Ìe ‘”  Ìf ‘”  Ìg ‘”  Ìh ‘”  Ìi ‘”  Ìj ‘”  Ìk ‘”  Ìl ‘”  Ìm ‘”  Ìn ‘”  Ìo ‘”  Ìp ‘”  Ìq ‘”  Ìr ‘”  Ìs ‘”  Ìt ‘”  Ìu ‘”  Ìv ‘”  Ìw ‘”  Ìx ‘”  Ìy ‘”  Ìz ‘”  Ì{ ‘”  Ì| ‘”  Ì} ‘”  Ì~ ‘”  Ì ‘”  Ì€ ‘”  Ì ‘”  Ì‚ ‘”  Ìƒ ‘”  Ì„ ‘”  Ì… ‘”  Ì† ‘”  Ì‡ ‘”  Ìˆ ‘”  Ì‰ ‘”  ÌŠ ‘”  Ì‹ ‘”  ÌŒ ‘”  Ì ‘”  Ì ‘”  Ì ‘”  Ì ‘”  Ì‘ ‘”  Ì’ ‘”  Ì“ ‘”  Ì” ‘”  Ì• ‘”  Ì– ‘”  Ì— ‘”  Ì˜ ‘”  Ì™ ‘”  Ìš ‘”  Ì› ‘”  Ìœ ‘”  Ì ‘”  Ì ‘”  ÌŸ ‘”  Ì  ‘”  Ì¡ ‘”  Ì¢ ‘”  Ì£ ‘”  Ì¤ ‘”  Ì¥ ‘”  Ì¦ ‘”  Ì§ ‘”  Ì¨ ‘”  Ì© ‘”  Ìª ‘”  Ì« ‘”  Ì¬ ‘”  Ì­ ‘”  Ì® ‘”  Ì¯ ‘”  Ì° ‘”  Ì± ‘”  Ì² ‘”  Ì³ ‘”  Ì´ ‘”  Ìµ ‘”  Ì¶ ‘”  Ì· ‘”  Ì¸ ‘”  Ì¹ ‘”  Ìº ‘”  Ì» ‘”  Ì¼ ‘”  Ì½ ‘”  Ì¾ ‘”  Ì¿ ‘”  ÌÀ ‘”  ÌÁ ‘”  ÌÂ ‘”  ÌÃ ‘”  ÌÄ ‘”  ÌÅ ‘”  ÌÆ ‘”  ÌÇ ‘”  ÌÈ ‘”  ÌÉ ‘”  ÌÊ ‘”  ÌË ‘”  ÌÌ ‘”  ÌÍ ‘”  ÌÎ ‘”  ÌÏ ‘”  ÌĞ ‘”  ÌÑ ‘”  ÌÒ ‘”  ÌÓ ‘”  ÌÔ ‘”  ÌÕ ‘”  ÌÖ ‘”  Ì× ‘”  ÌØ ‘”  ÌÙ ‘”  ÌÚ ‘”  ÌÛ ‘”  ÌÜ ‘”  Ìİ ‘”  ÌŞ ‘”  Ìß ‘”  Ìà ‘”  Ìá ‘”  Ìâ ‘”  Ìã ‘”  Ìä ‘”  Ìå ‘”  Ìæ ‘”  Ìç ‘”  Ìè ‘”  Ìé ‘”  Ìê ‘”  Ìë ‘”  Ìì ‘”  Ìí ‘”  Ìî ‘”  Ìï ‘”  Ìğ ‘”  Ìñ ‘”  Ìò ‘”  Ìó ‘”  Ìô ‘”  Ìõ ‘”  Ìö ‘”  Ì÷ ‘”  Ìø ‘”  Ìù ‘”  Ìú ‘”  Ìû ‘”  Ìü ‘”  Ìı ‘”  Ìş ‘”  Ìÿ ‘”  Í  ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í	 ‘”  Í
+ ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í ‘”  Í  ‘”  Í! ‘”  Í" ‘”  Í# ‘”  Í$ ‘”  Í% ‘”  Í& ‘”  Í' ‘”  Í( ‘”  Í) ‘”  Í* ‘”  Í+ ‘”  Í, ‘”  Í- ‘”  Í. ‘”  Í/ ‘”  Í0 ‘”  Í1 ‘”  Í2 ‘”  Í3 ‘”  Í4 ‘”  Í5 ‘”  Í6 ‘”  Í7 ‘”  Í8 ‘”  Í9 ‘”  Í: ‘”  Í; ‘”  Í< ‘”  Í= ‘”  Í> ‘”  Í? ‘”  Í@ ‘”  ÍA ‘”  ÍB ‘”  ÍC ‘”  ÍD ‘”  ÍE ‘”  ÍF ‘”  ÍG ‘”  ÍH ‘”  ÍI ‘”  ÍJ ‘”  ÍK ‘”  ÍL ‘”  ÍM ‘”  ÍN ‘”  ÍO ‘”  ÍP ‘”  ÍQ ‘”  ÍR ‘”  ÍS ‘”  ÍT ‘”  ÍU ‘”  ÍV ‘”  ÍW ‘”  ÍX ‘”  ÍY ‘”  ÍZ ‘”  Í[ ‘”  Í\ ‘”  Í] ‘”  Í^ ‘”  Í_ ‘”  Í` ‘”  Ía ‘”  Íb ‘”  Íc ‘”  Íd ‘”  Íe ‘”  Íf ‘”  Íg ‘”  Íh ‘”  Íi ‘”  Íj ‘”  Ík ‘”  Íl ‘”  Ím ‘”  Ín ‘”  Ío ‘”  Íp ‘”  Íq ‘”  Ír ‘”  Ís ‘”  Ít ‘”  Íu ‘”  Ív ‘”  Íw ‘”  Íx ‘”  Íy ‘”  Íz ‘”  Í{ ‘”  Í| ‘”  Í} ‘”  Í~ ‘”  Í ‘”  Í€ ‘”  Í ‘”  Í‚ ‘”  Íƒ ‘”  Í„ ‘”  Í… ‘”  Í† ‘”  Í‡ ‘”  Íˆ ‘”  Í‰ ‘”  ÍŠ ‘”  Í‹ ‘”  ÍŒ ‘”  Í ‘”  Í ‘”  Í ‘”  Í ÔrH’§missing¦pluginÃ¦genAbcÂÔ  ÔrI”²dynamicImportCache¹exportAllDeclarationCache»exportNamedDeclarationCache«importCache“ÔrJ•¤type¥start£endªspecifiers¦source±ImportDeclarationÌ€Ì¢‘ÔrK”¤type¥start£end¥local¶ImportDefaultSpecifierÌ‡ÌÔrL”¤type¥start£end¤nameªIdentifierÌ‡Ì¦routerÔrM•¤type¥start£end¥value£raw§LiteralÌ“Ì¡¬@ohos.router®"@ohos.router"J±ImportDeclarationÌ¤ÌÒ‘K¶ImportDefaultSpecifierÌ«Ì·LªIdentifierÌ«Ì·¬promptActionM§LiteralÌ½ÌÑ²@ohos.promptAction´"@ohos.promptAction"J±ImportDeclarationÌÔÍ‘K¸ImportNamespaceSpecifierÌÛÌêLªIdentifierÌàÌêªApiServiceM§LiteralÌğÍµ../service/ApiService·'../service/ApiService'

@@ -1,0 +1,13 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/Login",
+    "pages/Home",
+    "pages/DeviceList",
+    "pages/DeviceControl",
+    "pages/RoomList",
+    "pages/SceneList",
+    "pages/SceneEdit",
+    "pages/Settings"
+  ]
+}

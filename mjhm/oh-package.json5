@@ -1,0 +1,8 @@
+{
+  "modelVersion": "6.0.2",
+  "description": "米家鸿蒙原生重写（Mijia HarmonyOS NEXT）",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.19"
+  }
+}
