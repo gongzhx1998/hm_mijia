@@ -7,12 +7,14 @@
 		"icon":	"$media:app_icon",
 		"label":	"$string:app_name",
 		"apiReleaseType":	"Release",
-		"compileSdkVersion":	"6.0.2.130",
+		"compileSdkVersion":	"26.0.0.105",
 		"targetAPIVersion":	60002022,
 		"minAPIVersion":	50000012,
 		"compileSdkType":	"HarmonyOS",
 		"targetMinorAPIVersion":	0,
 		"targetPatchAPIVersion":	0,
+		"minMinorAPIVersion":	0,
+		"minPatchAPIVersion":	0,
 		"appEnvironments":	[],
 		"bundleType":	"app",
 		"buildMode":	"debug",
@@ -43,9 +45,9 @@
 						"actions":	["action.system.home"]
 					}],
 				"descriptionId":	16777218,
-				"iconId":	16777225,
+				"iconId":	16777229,
 				"labelId":	16777219,
-				"startWindowIconId":	16777225,
+				"startWindowIconId":	16777229,
 				"startWindowBackgroundId":	16777224
 			}],
 		"requestPermissions":	[{

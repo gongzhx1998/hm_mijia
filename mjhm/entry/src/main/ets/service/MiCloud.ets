@@ -678,6 +678,86 @@ export async function rpcRemote(did: string, method: string,
   return respData;
 }
 
+/** 透传米家云 API（插件 callSmartHomeAPI 用），data 为插件给的 JSON 字符串 */
+export async function callCloudApi(path: string, data: string): Promise<Record<string, Object>> {
+  const p: string = path.startsWith('/') ? path : '/' + path;
+  return await signedPost(p, data.length > 0 ? data : '{}', 'cn');
+}
+
+/** fetch_plugin 返回的插件包信息 */
+export interface PluginPackageInfo {
+  model: string;
+  pluginId: number;
+  packageId: number;
+  version: number;
+  sdkVersion: number;
+  downloadUrl: string;
+  md5: string;
+  size: number;
+}
+
+/**
+ * 按型号查询米家 RN 插件包（与米家 App 相同的 /v2/plugin/fetch_plugin）。
+ * 没有 RN 插件（download_url 为空）时返回 null。
+ */
+export async function fetchPluginInfo(model: string): Promise<PluginPackageInfo | null> {
+  const m: Map<string, PluginPackageInfo | null> = await fetchPluginInfos([model]);
+  return m.get(model) ?? null;
+}
+
+/**
+ * 批量查询插件包（一次 /v2/plugin/fetch_plugin）。结果里每个请求的型号都有键：
+ * 没有 download_url（无 RN 插件）或云端没返回的型号值为 null。
+ */
+export async function fetchPluginInfos(models: string[]): Promise<Map<string, PluginPackageInfo | null>> {
+  const out: Map<string, PluginPackageInfo | null> = new Map<string, PluginPackageInfo | null>();
+  const plugins: Object[] = [];
+  for (let i = 0; i < models.length; i++) {
+    out.set(models[i], null);
+    const item: Record<string, Object> = { 'model': models[i], 'package_id': 0, 'type': '' };
+    plugins.push(item);
+  }
+  if (plugins.length === 0) {
+    return out;
+  }
+  const latest: Record<string, Object> = {
+    'api_version': 10117, 'app_platform': 'android', 'region': 'cn', 'plugins': plugins, 'package_type': ''
+  };
+  const backup: Record<string, Object> = { 'plugins': plugins, 'api_level': 111, 'app_platform': 'phone' };
+  const body: Record<string, Object> = { 'is_car_mihome': false, 'latest_req': latest, 'backup_req': backup };
+  const resp = await signedPost('/v2/plugin/fetch_plugin', JSON.stringify(body), 'cn');
+  const code: number = Number(resp['code'] ?? -1);
+  if (code !== 0) {
+    throw new Error(`fetch_plugin code=${code} ${String(resp['message'] ?? '')}`);
+  }
+  const result = resp['result'] as Record<string, Object> | undefined;
+  const list = result !== undefined ? result['latest_info'] : undefined;
+  if (list === undefined || !(list instanceof Array)) {
+    return out;
+  }
+  const arr: Object[] = list as Object[];
+  for (let i = 0; i < arr.length; i++) {
+    const x = arr[i] as Record<string, Object>;
+    const model: string = String(x['model'] ?? '');
+    const url: string = String(x['download_url'] ?? '');
+    if (!out.has(model) || url.length === 0) {
+      continue;
+    }
+    const info: PluginPackageInfo = {
+      model: model,
+      pluginId: Number(x['plugin_id'] ?? 0),
+      packageId: Number(x['plugin_package_id'] ?? 0),
+      version: Number(x['version'] ?? 0),
+      sdkVersion: Number(x['sdk_version'] ?? 0),
+      downloadUrl: url,
+      md5: String(x['md5sum'] ?? '').toLowerCase(),
+      size: Number(x['size'] ?? 0)
+    };
+    out.set(model, info);
+  }
+  return out;
+}
+
 /**
  * miot-spec 读属性（云）：POST /miotspec/prop/get，data={"params":[{"did","siid","piid"}]}。
  * 逆向 11.8.705 SpecPropertyApi 确认。返回 result[].value 为属性值，result[].code<0 表示失败。

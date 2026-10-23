@@ -130,11 +130,11 @@
             "material": {
               "certpath": "C:\\Users\\ZhixinGong\\.ohos\\config\\default_mjhm_nXElK8MEyvTov5YXTMW8tuMlgTMFAee4XStdMSLajeY=.cer",
               "keyAlias": "debugKey",
-              "keyPassword": "0000001B32FBE30E572AEAC7D6FB2A7DF73274E4D6D0ACCB956D0A5AFE5E430C2A9594F311E7CD7FF5C2AE",
+              "keyPassword": "0000001B4F0A6654175670AFB477FA47CE455F87F2BB1C94B433C95AD57165F00E6F26AB57ECC253E64280",
               "profile": "C:\\Users\\ZhixinGong\\.ohos\\config\\default_mjhm_nXElK8MEyvTov5YXTMW8tuMlgTMFAee4XStdMSLajeY=.p7b",
               "signAlg": "SHA256withECDSA",
               "storeFile": "C:\\Users\\ZhixinGong\\.ohos\\config\\default_mjhm_nXElK8MEyvTov5YXTMW8tuMlgTMFAee4XStdMSLajeY=.p12",
-              "storePassword": "0000001B15CCE949246CE2834BE20BDD500EC7A83C897483710CA0EAD6D5521CB4965BC30C861247B897AA"
+              "storePassword": "0000001BDE82E59E411D674C0A53A3EBFA5B7F809D05A35EE1EB202AA569EACC80DB4557E103466011EA80"
             }
           }
         ],

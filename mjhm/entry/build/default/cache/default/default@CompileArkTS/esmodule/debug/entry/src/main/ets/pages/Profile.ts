@@ -430,4 +430,6 @@ export class ProfileTab extends ViewPU {
     rerender() {
         this.updateDirtyElements();
     }
+    public __resetStateVarsOnReuse__Internal(params: Object): void {
+    }
 }

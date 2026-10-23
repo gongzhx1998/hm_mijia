@@ -8,6 +8,7 @@
     "pages/RoomList",
     "pages/SceneList",
     "pages/SceneEdit",
-    "pages/Settings"
+    "pages/Settings",
+    "pages/PluginHost"
   ]
 }

@@ -216,6 +216,8 @@ class RoomList extends ViewPU {
     rerender() {
         this.updateDirtyElements();
     }
+    public __resetStateVarsOnReuse__Internal(params: Object): void {
+    }
     static getEntryName(): string {
         return "RoomList";
     }

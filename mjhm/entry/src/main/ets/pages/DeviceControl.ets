@@ -1215,6 +1215,30 @@ struct DeviceControl {
             .borderRadius(16)
             .margin({ bottom: 12 })
 
+            Row() {
+              Text('米家原版插件（实验）')
+                .fontSize(14)
+                .fontColor('#1677FF')
+              Text(' ›')
+                .fontSize(14)
+                .fontColor('#1677FF')
+            }
+            .width('100%')
+            .padding(14)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(12)
+            .margin({ bottom: 12 })
+            .onClick(() => {
+              if (this.device !== null) {
+                const params: Record<string, string> = {
+                  'did': this.device.did,
+                  'model': this.device.model,
+                  'name': this.device.name
+                };
+                router.pushUrl({ url: 'pages/PluginHost', params: params });
+              }
+            })
+
             if (this.loading) {
               Column() {
                 LoadingProgress()

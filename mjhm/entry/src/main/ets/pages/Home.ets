@@ -5,6 +5,8 @@ import * as MiCloud from '../service/MiCloud';
 import { AppConfig, Logger, setStatusBar } from '../common/AppConfig';
 import { Room, Device, DeviceCommand, Home } from '../model/Models';
 import { ProfileTab } from './Profile';
+import { common } from '@kit.AbilityKit';
+import { prefetchAll } from '../service/PluginStore';
 
 const TAG = 'Home';
 
@@ -74,12 +76,31 @@ struct HomePage {
       // 批量读取可开关设备的电源状态，让开关按钮显示真实状态
       await ApiService.readPowerStates(this.devices);
       Logger.info(TAG, `loadData done: homes=${this.homes.length} rooms=${this.rooms.length} devices=${this.devices.length}`);
+      this.startPluginPrefetch();
     } catch (e) {
       Logger.error(TAG, `loadData failed: ${e}`);
       this.errorMsg = '同步失败，请检查网络后下拉重试';
     } finally {
       this.loading = false;
     }
+  }
+
+  /**
+   * 后台预取所有设备的米家插件：先从云端刷新全量设备列表（缓存可能缺新设备），
+   * 再交给 PluginStore 去重/批量查询/限并发下载。不阻塞首页渲染。
+   */
+  private startPluginPrefetch(): void {
+    const ctx: common.Context = getContext(this) as common.UIAbilityContext;
+    const fallback: string[] = this.devices.map((d: Device) => d.model);
+    setTimeout(() => {
+      ApiService.reloadDevicesForHome('').then((all: Device[]) => {
+        const models: string[] = all.length > 0 ? all.map((d: Device) => d.model) : fallback;
+        prefetchAll(ctx, models);
+      }).catch((e: Error) => {
+        Logger.error(TAG, `prefetch device list failed: ${e?.message ?? e}`);
+        prefetchAll(ctx, fallback);
+      });
+    }, 1500);
   }
 
   /** 切换家庭：更新 homeId/homeName，重新拉取该家庭的房间和设备 */
@@ -662,8 +683,19 @@ struct HomePage {
     .backgroundColor('#D9222B33')
     .borderRadius(16)
     .onClick(() => {
-      router.pushUrl({ url: 'pages/DeviceControl', params: { did: device.did } });
+      // 点设备 → 打开该设备自己的米家 RN 插件（按型号下载/缓存）；无插件时插件页自动回退原生控制页
+      const params: Record<string, string> = {
+        'did': device.did,
+        'model': device.model,
+        'name': device.name,
+        'online': device.online ? '1' : '0'
+      };
+      router.pushUrl({ url: 'pages/PluginHost', params: params });
     })
+    .gesture(LongPressGesture().onAction(() => {
+      // 长按：直接进原生控制页
+      router.pushUrl({ url: 'pages/DeviceControl', params: { did: device.did } });
+    }))
   }
 
   @Builder

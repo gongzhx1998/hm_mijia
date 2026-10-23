@@ -70,6 +70,16 @@ class DeviceList extends ViewPU {
     async aboutToAppear(): Promise<void> {
         this.devices = await ApiService.getDevices('');
         this.buildGroup();
+        // 后台刷新云端设备列表（缓存可能缺新设备），不阻塞首屏
+        try {
+            const fresh: Device[] = await ApiService.reloadDevicesForHome('');
+            if (fresh.length > 0) {
+                this.devices = fresh;
+                this.buildGroup();
+            }
+        }
+        catch (_e) {
+        }
     }
     /** 构建 roomId → 设备 did 数组 的映射，以及房间顺序 */
     buildGroup(): void {
@@ -133,8 +143,23 @@ class DeviceList extends ViewPU {
             Row.borderRadius(12);
             Row.margin({ bottom: 8 });
             Row.onClick(() => {
+                // 点设备 → 打开该设备自己的米家 RN 插件（按型号下载/缓存）；无插件时插件页自动回退原生控制页
+                const params: Record<string, string> = {
+                    'did': device.did,
+                    'model': device.model,
+                    'name': device.name,
+                    'online': device.online ? '1' : '0'
+                };
+                router.pushUrl({ url: 'pages/PluginHost', params: params });
+            });
+            globalThis.Gesture.create(GesturePriority.Low);
+            LongPressGesture.create();
+            LongPressGesture.onAction(() => {
+                // 长按：直接进原生控制页
                 router.pushUrl({ url: 'pages/DeviceControl', params: { did: device.did } });
             });
+            LongPressGesture.pop();
+            globalThis.Gesture.pop();
         }, Row);
         this.observeComponentCreation2((elmtId, isInitialRender) => {
             Text.create(this.deviceIcon(device.type));
@@ -268,6 +293,8 @@ class DeviceList extends ViewPU {
     }
     rerender() {
         this.updateDirtyElements();
+    }
+    public __resetStateVarsOnReuse__Internal(params: Object): void {
     }
     static getEntryName(): string {
         return "DeviceList";

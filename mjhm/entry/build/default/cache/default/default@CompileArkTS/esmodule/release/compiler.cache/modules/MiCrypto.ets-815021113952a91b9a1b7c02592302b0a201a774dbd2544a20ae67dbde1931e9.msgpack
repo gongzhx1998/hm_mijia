@@ -1,628 +1,0 @@
-Ôr@Ÿªassertions¤code´customTransformCache¬dependencies¢id¤meta±moduleSideEffects¬originalCode±originalSourcemap«resolvedIds®sourcemapChainµsyntheticNamedExportsµtransformDependencies®transformFiles¨cacheAstÔrAÚ Äimport cryptoFramework from "@ohos.security.cryptoFramework";
-import util from "@ohos.util";
-/**
- * miIO åè®®åŠ å¯†å·¥å…·ï¼ˆæ¨¡å—çº§å‡½æ•°ï¼Œé¿å… ArkTS ç¦æ­¢çš„ thisï¼‰
- * key = MD5(token)ï¼›IV = MD5(key + token)ï¼›AES-128-CBC + PKCS7
- */
-export async function md5(data) {
-    const md = cryptoFramework.createMd('MD5');
-    const blob = { data: data };
-    await md.update(blob);
-    const digest = await md.digest();
-    return toHex(digest.data);
-}
-export async function deriveKeyIv(tokenBytes) {
-    const keyHex = await md5(tokenBytes);
-    const key = fromHex(keyHex);
-    const combined = new Uint8Array(key.length + tokenBytes.length);
-    combined.set(key, 0);
-    combined.set(tokenBytes, key.length);
-    const ivHex = await md5(combined);
-    const iv = fromHex(ivHex);
-    const result = { key: key, iv: iv };
-    return result;
-}
-export async function aesCbcEncrypt(plain, key, iv) {
-    const cipher = cryptoFramework.createCipher('AES128|CBC|PKCS7');
-    const symKey = await makeSymKey(key);
-    const ivSpec = { algName: 'IvParamsSpec', iv: { data: iv } };
-    await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, ivSpec);
-    const result = await cipher.doFinal({ data: plain });
-    return new Uint8Array(result.data);
-}
-export async function aesCbcDecrypt(cipherText, key, iv) {
-    const cipher = cryptoFramework.createCipher('AES128|CBC|PKCS7');
-    const symKey = await makeSymKey(key);
-    const ivSpec = { algName: 'IvParamsSpec', iv: { data: iv } };
-    await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, ivSpec);
-    const result = await cipher.doFinal({ data: cipherText });
-    return new Uint8Array(result.data);
-}
-async function makeSymKey(key) {
-    const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES128');
-    const keyBlob = { data: key };
-    return await symKeyGenerator.convertKey(keyBlob);
-}
-export async function hmacSha256Bytes(key, msg) {
-    const mac = cryptoFramework.createMac('SHA256');
-    const keyGen = cryptoFramework.createSymKeyGenerator('SHA256');
-    const keyBlob = { data: key };
-    const symKey = await keyGen.convertKey(keyBlob);
-    await mac.init(symKey);
-    await mac.update({ data: msg });
-    const out = await mac.doFinal();
-    return new Uint8Array(out.data);
-}
-export async function sha256Bytes(data) {
-    const md = cryptoFramework.createMd('SHA256');
-    await md.update({ data: data });
-    const digest = await md.digest();
-    return new Uint8Array(digest.data);
-}
-export function base64Encode(data) {
-    const helper = new util.Base64Helper();
-    return helper.encodeToStringSync(data);
-}
-export function base64Decode(s) {
-    const helper = new util.Base64Helper();
-    // é˜²å¾¡ï¼šå»æ‰æ‰€æœ‰é base64 å­—ç¬¦ï¼ˆç©ºç™½/æ¢è¡Œ/å¼•å·ç­‰ï¼‰ï¼Œå¹¶è¡¥è¶³ paddingï¼Œ
-    // å¦åˆ™ decodeSync ä¼šæŠ› "The input string contains unsupported characters"
-    let cleaned = '';
-    for (let i = 0; i < s.length; i++) {
-        const c = s.charAt(i);
-        const ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-            || c === '+' || c === '/' || c === '=';
-        if (ok) {
-            cleaned += c;
-        }
-    }
-    // ç©ºä¸²/å…¨éæ³•å­—ç¬¦ï¼šè¿”å›ç©ºå­—èŠ‚ï¼Œé¿å… decodeSync æŠ› unsupported characters
-    const noPad = cleaned.replace(/=+$/, '');
-    if (noPad === '') {
-        return new Uint8Array(0);
-    }
-    // å»æ‰æœ«å°¾ padding åæŒ‰ 4 å¯¹é½è¡¥ '='ï¼Œå¦åˆ™ decodeSync å¯¹é 4 å€æ•°é•¿åº¦ä¹Ÿä¼šæŠ¥é”™
-    const rem = noPad.length % 4;
-    let aligned = noPad;
-    if (rem !== 0) {
-        for (let i = 0; i < 4 - rem; i++) {
-            aligned += '=';
-        }
-    }
-    return new Uint8Array(helper.decodeSync(aligned));
-}
-export function randomBytes(n) {
-    const b = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-        b[i] = Math.floor(Math.random() * 256);
-    }
-    return b;
-}
-export function toHex(data) {
-    let s = '';
-    for (let i = 0; i < data.length; i++) {
-        s += data[i].toString(16).padStart(2, '0');
-    }
-    return s;
-}
-export function fromHex(hex) {
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < hex.length; i += 2) {
-        bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-    }
-    return bytes;
-}
-export function utf8Bytes(str) {
-    const textEncoder = new util.TextEncoder();
-    const result = new Uint8Array(textEncoder.encodeInto(str));
-    return result;
-}
-export function utf8String(data) {
-    const textDecoder = util.TextDecoder.create('utf-8');
-    return textDecoder.decodeToString(data);
-}
-/**
- * RC4 æµåŠ å¯†ï¼ˆçº¯ ArkTS å®ç°ï¼Œå¯†é’¥ä¸ºå­—èŠ‚æ•°ç»„ï¼‰ã€‚
- * ç±³å®¶äº‘ RC4 åè®®éœ€è¦å…ˆä¸¢å¼ƒå‰ 1024 å­—èŠ‚å¯†é’¥æµï¼ˆKSA + 1024 æ¬¡ PRGAï¼‰ã€‚
- */
-export function rc4Crypt(key, data, drop = 0) {
-    const s = new Array(256);
-    for (let i = 0; i < 256; i++) {
-        s[i] = i;
-    }
-    let j = 0;
-    for (let i = 0; i < 256; i++) {
-        j = (j + s[i] + key[i % key.length]) & 0xff;
-        const tmp = s[i];
-        s[i] = s[j];
-        s[j] = tmp;
-    }
-    // ä¸¢å¼ƒå‰ drop å­—èŠ‚å¯†é’¥æµï¼ˆKSA åå…ˆè·‘ drop è½® PRGAï¼‰
-    let a = 0;
-    let b = 0;
-    for (let k = 0; k < drop; k++) {
-        a = (a + 1) & 0xff;
-        b = (b + s[a]) & 0xff;
-        const t = s[a];
-        s[a] = s[b];
-        s[b] = t;
-    }
-    // ç»§ç»­ç”¨æ›´æ–°åçš„ a/b/s çŠ¶æ€åŠ å¯†æ•°æ®
-    const out = new Uint8Array(data.length);
-    for (let k = 0; k < data.length; k++) {
-        a = (a + 1) & 0xff;
-        b = (b + s[a]) & 0xff;
-        const t = s[a];
-        s[a] = s[b];
-        s[b] = t;
-        const keystream = s[(s[a] + s[b]) & 0xff];
-        out[k] = data[k] ^ keystream;
-    }
-    return out;
-}
-/** SHA1 æ‘˜è¦ï¼Œè¿”å›å­—èŠ‚æ•°ç»„ */
-export async function sha1Bytes(data) {
-    const md = cryptoFramework.createMd('SHA1');
-    await md.update({ data: data });
-    const digest = await md.digest();
-    return new Uint8Array(digest.data);
-}
-/**
- * AES-256-GCM åŠ å¯†ï¼ˆç±³å®¶äº‘ 11.8.x ENCRYPT-AES åè®®ï¼‰ã€‚
- * key = 32 å­—èŠ‚ï¼Œiv = 12 å­—èŠ‚ï¼Œtag = 16 å­—èŠ‚ï¼ˆGCM æ ‡å‡† 128 ä½ï¼‰ã€‚
- * è¿”å› ciphertext â€– tagï¼ˆ16 å­—èŠ‚ tag æ‹¼æ¥åœ¨æœ«å°¾ï¼Œä¸ Java AES/GCM/NoPadding çš„ doFinal è¾“å‡ºä¸€è‡´ï¼‰ã€‚
- * é¸¿è’™ APIï¼šupdate(æ˜æ–‡) è¿”å›å¯†æ–‡ï¼ŒdoFinal(null) è¿”å› authTagï¼Œéœ€æ‰‹åŠ¨æ‹¼æ¥ã€‚
- */
-export async function aesGcmEncrypt(plain, key, iv) {
-    const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
-    const symKey = await makeSymKey256(key);
-    const gcmParams = {
-        algName: 'GcmParamsSpec',
-        iv: { data: iv },
-        aad: { data: new Uint8Array(0) },
-        authTag: { data: new Uint8Array(0) }
-    };
-    await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, gcmParams);
-    const cipherText = await cipher.update({ data: plain });
-    const tag = await cipher.doFinal(null);
-    const ct = new Uint8Array(cipherText.data);
-    const tg = tag === null ? new Uint8Array(0) : new Uint8Array(tag.data);
-    const out = new Uint8Array(ct.length + tg.length);
-    out.set(ct, 0);
-    out.set(tg, ct.length);
-    return out;
-}
-/** AES-256-GCM è§£å¯†ï¼šè¾“å…¥ ciphertext â€– tagï¼ˆæœ«å°¾ 16 å­—èŠ‚ä¸º tagï¼‰ï¼Œè¿”å›æ˜æ–‡ã€‚ */
-export async function aesGcmDecrypt(cipherWithTag, key, iv) {
-    const tagLen = 16;
-    const cipherText = cipherWithTag.subarray(0, cipherWithTag.length - tagLen);
-    const tag = cipherWithTag.subarray(cipherWithTag.length - tagLen);
-    const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
-    const symKey = await makeSymKey256(key);
-    const gcmParams = {
-        algName: 'GcmParamsSpec',
-        iv: { data: iv },
-        aad: { data: new Uint8Array(0) },
-        authTag: { data: tag }
-    };
-    await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, gcmParams);
-    const plain = await cipher.update({ data: cipherText });
-    await cipher.doFinal(null);
-    return new Uint8Array(plain.data);
-}
-async function makeSymKey256(key) {
-    const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES256');
-    const keyBlob = { data: key };
-    return await symKeyGenerator.convertKey(keyBlob);
-}
-//# sourceMappingURL=MiCrypto.js.mapÂ’Ùx hvigor_ignore_D:_Program Files_Huawei_DevEco Studio_sdk_default_openharmony_ets_api_@ohos.security.cryptoFramework.d.tsÙd hvigor_ignore_D:_Program Files_Huawei_DevEco Studio_sdk_default_openharmony_ets_api_@ohos.util.d.tsÙ^C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm\entry\src\main\ets\service\MiCrypto.etsÔrBœªmoduleName±isLocalDependency¯isNodeEntryFile§pkgPath±belongProjectPath§pkgNameªpkgVersion±dependencyPkgInfo¯hostModulesInfo°belongModulePath§checker¬shouldEmitJs¥entryÃÂÙ<C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm\entryÙ6C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm¥entry¥1.0.0Ô  ‘ÔrC’²hostDependencyName®hostModuleNameª./MiCrypto¥entryÙ<C:\Users\ZhixinGong\WorkBuddy\2026-10-16-09-47-37\mjhm\entryÔrDÜ ®¬getNodeCount²getIdentifierCount®getSymbolCount¬getTypeCountµgetInstantiationCountµgetRelationCacheSizes±isUndefinedSymbol±isArgumentsSymbol¯isUnknownSymbol¯getMergedSymbol®getDiagnostics´getGlobalDiagnostics´getRecursionIdentity¶getUnmatchedProperties¹getTypeOfSymbolAtLocation¯getTypeOfSymbolÙ(getSymbolsOfParameterPropertyDeclaration·getDeclaredTypeOfSymbol³getPropertiesOfType±getPropertyOfTypeÙ"getPrivateIdentifierPropertyOfType·getTypeOfPropertyOfType²getIndexInfoOfType³getIndexInfosOfTypeºgetIndexInfosOfIndexSymbol³getSignaturesOfType²getIndexTypeOfType¬getIndexType¬getBaseTypes¸getBaseTypeOfLiteralType®getWidenedType³getTypeFromTypeNode°getParameterTypeÙ$getParameterIdentifierNameAtPosition¸getPromisedTypeOfPromise®getAwaitedType¸getReturnTypeOfSignature®isNullableType¯getNullableType²getNonNullableType²getNonOptionalType°getTypeArguments®typeToTypeNodeÙ$indexInfoToIndexSignatureDeclaration¿signatureToSignatureDeclaration²symbolToEntityName²symbolToExpression¬symbolToNodeÙ!symbolToTypeParameterDeclarations¼symbolToParameterDeclarationºtypeParameterToDeclaration±getSymbolsInScope³getSymbolAtLocation·getIndexInfosAtLocationÙ!getShorthandAssignmentValueSymbolÙ#getExportSpecifierLocalTargetSymbol·getExportSymbolOfSymbol±getTypeAtLocationºgetTypeAtLocationForLinterÙ tryGetTypeAtLocationWithoutCheckºgetTypeOfAssignmentPatternÙ*getPropertySymbolOfDestructuringAssignment±signatureToString¬typeToString®symbolToStringµtypePredicateToString®writeSignature©writeType«writeSymbol²writeTypePredicate¼getAugmentedPropertiesOfType®getRootSymbols²getSymbolOfExpando±getContextualTypeÙ(getContextualTypeForObjectLiteralElementÙ#getContextualTypeForArgumentAtIndexÙ getContextualTypeForJsxAttribute²isContextSensitiveÙ!getTypeOfPropertyOfContextualTypeµgetFullyQualifiedNameÙ#tryGetResolvedSignatureWithoutCheck´getResolvedSignatureÙ/getResolvedSignatureForStringLiteralCompletionsÙ$getResolvedSignatureForSignatureHelpµgetExpandedParameters¹hasEffectiveRestParameterºcontainsArgumentsReference°getConstantValueµisValidPropertyAccessÙ#isValidPropertyAccessForCompletions»getSignatureFromDeclarationºisImplementationOfOverload¹getImmediateAliasedSymbol°getAliasedSymbol¯getEmitResolver²getExportsOfModule¿getExportsAndPropertiesOfModuleÙ forEachExportAndPropertyOfModule¯getSymbolWalker±getAmbientModules¹getJsxIntrinsicTagNamesAt³isOptionalParameter»tryGetMemberInModuleExportsÙ(tryGetMemberInModuleExportsAndProperties´tryFindAmbientModuleÙ(tryFindAmbientModuleWithoutAugmentations¯getApparentType¬getUnionType²isTypeAssignableTo³createAnonymousType¯createSignature¬createSymbol¯createIndexInfoªgetAnyType­getStringType­getNumberType±createPromiseType¯createArrayType¹getElementTypeOfArrayType®getBooleanType¬getFalseType«getTrueType«getVoidType°getUndefinedType«getNullType¯getESSymbolType¬getNeverType¯getOptionalType®getPromiseType²getPromiseLikeType´getAsyncIterableType²isSymbolAccessible«isArrayType«isTupleType¯isArrayLikeTypeÙ#isTypeInvalidDueToUnionDiscriminantºgetExactOptionalProperties¿getAllPossiblePropertiesOfTypesÙ(getSuggestedSymbolForNonexistentPropertyÙ#getSuggestionForNonexistentPropertyÙ,getSuggestedSymbolForNonexistentJSXAttributeÙ&getSuggestedSymbolForNonexistentSymbolÙ!getSuggestionForNonexistentSymbolÙ&getSuggestedSymbolForNonexistentModuleÙ!getSuggestionForNonexistentExportÙ+getSuggestedSymbolForNonexistentClassMember·getBaseConstraintOfType»getDefaultFromTypeParameter«resolveName¯getJsxNamespaceµgetJsxFragmentFactory¸getAccessibleSymbolChain»getTypePredicateOfSignature¹resolveExternalModuleName»resolveExternalModuleSymbol°tryGetThisTypeAt¹getTypeArgumentConstraint¸getSuggestionDiagnostics¸runWithCancellationTokenÙ3getLocalTypeParametersOfClassOrInterfaceOrTypeAlias´isDeclarationVisible´isPropertyAccessible»getTypeOnlyAliasDeclaration¿getMemberOverrideModifierStatusÙ!isTypeParameterPossiblyReferenced²getConstEnumRelate´clearConstEnumRelateµdeleteConstEnumRelateÙ$getTypeArgumentsForResolvedSignatureµgetCheckedSourceFilesÙ"collectHaveTsNoCheckFilesForLinter·clearQualifiedNameCache®isStaticRecord²isStaticSourceFileÔ  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  Ô  ÃÃÚ"Ÿimport { cryptoFramework } from '@kit.CryptoArchitectureKit';
-import { util } from '@kit.ArkTS';
-
-export interface KeyIv {
-  key: Uint8Array;
-  iv: Uint8Array;
-}
-
-/**
- * miIO åè®®åŠ å¯†å·¥å…·ï¼ˆæ¨¡å—çº§å‡½æ•°ï¼Œé¿å… ArkTS ç¦æ­¢çš„ thisï¼‰
- * key = MD5(token)ï¼›IV = MD5(key + token)ï¼›AES-128-CBC + PKCS7
- */
-export async function md5(data: Uint8Array): Promise<string> {
-  const md = cryptoFramework.createMd('MD5');
-  const blob: cryptoFramework.DataBlob = { data: data };
-  await md.update(blob);
-  const digest = await md.digest();
-  return toHex(digest.data);
-}
-
-export async function deriveKeyIv(tokenBytes: Uint8Array): Promise<KeyIv> {
-  const keyHex = await md5(tokenBytes);
-  const key = fromHex(keyHex);
-
-  const combined = new Uint8Array(key.length + tokenBytes.length);
-  combined.set(key, 0);
-  combined.set(tokenBytes, key.length);
-  const ivHex = await md5(combined);
-  const iv = fromHex(ivHex);
-
-  const result: KeyIv = { key: key, iv: iv };
-  return result;
-}
-
-export async function aesCbcEncrypt(plain: Uint8Array, key: Uint8Array, iv: Uint8Array): Promise<Uint8Array> {
-  const cipher = cryptoFramework.createCipher('AES128|CBC|PKCS7');
-  const symKey: cryptoFramework.SymKey = await makeSymKey(key);
-  const ivSpec: cryptoFramework.IvParamsSpec = { algName: 'IvParamsSpec', iv: { data: iv } };
-  await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, ivSpec);
-  const result = await cipher.doFinal({ data: plain });
-  return new Uint8Array(result.data);
-}
-
-export async function aesCbcDecrypt(cipherText: Uint8Array, key: Uint8Array, iv: Uint8Array): Promise<Uint8Array> {
-  const cipher = cryptoFramework.createCipher('AES128|CBC|PKCS7');
-  const symKey: cryptoFramework.SymKey = await makeSymKey(key);
-  const ivSpec: cryptoFramework.IvParamsSpec = { algName: 'IvParamsSpec', iv: { data: iv } };
-  await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, ivSpec);
-  const result = await cipher.doFinal({ data: cipherText });
-  return new Uint8Array(result.data);
-}
-
-async function makeSymKey(key: Uint8Array): Promise<cryptoFramework.SymKey> {
-  const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES128');
-  const keyBlob: cryptoFramework.DataBlob = { data: key };
-  return await symKeyGenerator.convertKey(keyBlob);
-}
-
-export async function hmacSha256Bytes(key: Uint8Array, msg: Uint8Array): Promise<Uint8Array> {
-  const mac = cryptoFramework.createMac('SHA256');
-  const keyGen = cryptoFramework.createSymKeyGenerator('SHA256');
-  const keyBlob: cryptoFramework.DataBlob = { data: key };
-  const symKey: cryptoFramework.SymKey = await keyGen.convertKey(keyBlob);
-  await mac.init(symKey);
-  await mac.update({ data: msg });
-  const out = await mac.doFinal();
-  return new Uint8Array(out.data);
-}
-
-export async function sha256Bytes(data: Uint8Array): Promise<Uint8Array> {
-  const md = cryptoFramework.createMd('SHA256');
-  await md.update({ data: data });
-  const digest = await md.digest();
-  return new Uint8Array(digest.data);
-}
-
-export function base64Encode(data: Uint8Array): string {
-  const helper = new util.Base64Helper();
-  return helper.encodeToStringSync(data);
-}
-
-export function base64Decode(s: string): Uint8Array {
-  const helper = new util.Base64Helper();
-  // é˜²å¾¡ï¼šå»æ‰æ‰€æœ‰é base64 å­—ç¬¦ï¼ˆç©ºç™½/æ¢è¡Œ/å¼•å·ç­‰ï¼‰ï¼Œå¹¶è¡¥è¶³ paddingï¼Œ
-  // å¦åˆ™ decodeSync ä¼šæŠ› "The input string contains unsupported characters"
-  let cleaned = '';
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charAt(i);
-    const ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-      || c === '+' || c === '/' || c === '=';
-    if (ok) {
-      cleaned += c;
-    }
-  }
-  // ç©ºä¸²/å…¨éæ³•å­—ç¬¦ï¼šè¿”å›ç©ºå­—èŠ‚ï¼Œé¿å… decodeSync æŠ› unsupported characters
-  const noPad = cleaned.replace(/=+$/, '');
-  if (noPad === '') {
-    return new Uint8Array(0);
-  }
-  // å»æ‰æœ«å°¾ padding åæŒ‰ 4 å¯¹é½è¡¥ '='ï¼Œå¦åˆ™ decodeSync å¯¹é 4 å€æ•°é•¿åº¦ä¹Ÿä¼šæŠ¥é”™
-  const rem = noPad.length % 4;
-  let aligned = noPad;
-  if (rem !== 0) {
-    for (let i = 0; i < 4 - rem; i++) {
-      aligned += '=';
-    }
-  }
-  return new Uint8Array(helper.decodeSync(aligned));
-}
-
-export function randomBytes(n: number): Uint8Array {
-  const b = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    b[i] = Math.floor(Math.random() * 256);
-  }
-  return b;
-}
-
-export function toHex(data: Uint8Array): string {
-  let s = '';
-  for (let i = 0; i < data.length; i++) {
-    s += data[i].toString(16).padStart(2, '0');
-  }
-  return s;
-}
-
-export function fromHex(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return bytes;
-}
-
-export function utf8Bytes(str: string): Uint8Array {
-  const textEncoder = new util.TextEncoder();
-  const result = new Uint8Array(textEncoder.encodeInto(str));
-  return result;
-}
-
-export function utf8String(data: Uint8Array): string {
-  const textDecoder = util.TextDecoder.create('utf-8');
-  return textDecoder.decodeToString(data);
-}
-
-/**
- * RC4 æµåŠ å¯†ï¼ˆçº¯ ArkTS å®ç°ï¼Œå¯†é’¥ä¸ºå­—èŠ‚æ•°ç»„ï¼‰ã€‚
- * ç±³å®¶äº‘ RC4 åè®®éœ€è¦å…ˆä¸¢å¼ƒå‰ 1024 å­—èŠ‚å¯†é’¥æµï¼ˆKSA + 1024 æ¬¡ PRGAï¼‰ã€‚
- */
-export function rc4Crypt(key: Uint8Array, data: Uint8Array, drop: number = 0): Uint8Array {
-  const s: number[] = new Array<number>(256);
-  for (let i = 0; i < 256; i++) {
-    s[i] = i;
-  }
-  let j = 0;
-  for (let i = 0; i < 256; i++) {
-    j = (j + s[i] + key[i % key.length]) & 0xff;
-    const tmp = s[i];
-    s[i] = s[j];
-    s[j] = tmp;
-  }
-  // ä¸¢å¼ƒå‰ drop å­—èŠ‚å¯†é’¥æµï¼ˆKSA åå…ˆè·‘ drop è½® PRGAï¼‰
-  let a = 0;
-  let b = 0;
-  for (let k = 0; k < drop; k++) {
-    a = (a + 1) & 0xff;
-    b = (b + s[a]) & 0xff;
-    const t = s[a];
-    s[a] = s[b];
-    s[b] = t;
-  }
-  // ç»§ç»­ç”¨æ›´æ–°åçš„ a/b/s çŠ¶æ€åŠ å¯†æ•°æ®
-  const out = new Uint8Array(data.length);
-  for (let k = 0; k < data.length; k++) {
-    a = (a + 1) & 0xff;
-    b = (b + s[a]) & 0xff;
-    const t = s[a];
-    s[a] = s[b];
-    s[b] = t;
-    const keystream = s[(s[a] + s[b]) & 0xff];
-    out[k] = data[k] ^ keystream;
-  }
-  return out;
-}
-
-/** SHA1 æ‘˜è¦ï¼Œè¿”å›å­—èŠ‚æ•°ç»„ */
-export async function sha1Bytes(data: Uint8Array): Promise<Uint8Array> {
-  const md = cryptoFramework.createMd('SHA1');
-  await md.update({ data: data });
-  const digest = await md.digest();
-  return new Uint8Array(digest.data);
-}
-
-/**
- * AES-256-GCM åŠ å¯†ï¼ˆç±³å®¶äº‘ 11.8.x ENCRYPT-AES åè®®ï¼‰ã€‚
- * key = 32 å­—èŠ‚ï¼Œiv = 12 å­—èŠ‚ï¼Œtag = 16 å­—èŠ‚ï¼ˆGCM æ ‡å‡† 128 ä½ï¼‰ã€‚
- * è¿”å› ciphertext â€– tagï¼ˆ16 å­—èŠ‚ tag æ‹¼æ¥åœ¨æœ«å°¾ï¼Œä¸ Java AES/GCM/NoPadding çš„ doFinal è¾“å‡ºä¸€è‡´ï¼‰ã€‚
- * é¸¿è’™ APIï¼šupdate(æ˜æ–‡) è¿”å›å¯†æ–‡ï¼ŒdoFinal(null) è¿”å› authTagï¼Œéœ€æ‰‹åŠ¨æ‹¼æ¥ã€‚
- */
-export async function aesGcmEncrypt(plain: Uint8Array, key: Uint8Array, iv: Uint8Array): Promise<Uint8Array> {
-  const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
-  const symKey: cryptoFramework.SymKey = await makeSymKey256(key);
-  const gcmParams: cryptoFramework.GcmParamsSpec = {
-    algName: 'GcmParamsSpec',
-    iv: { data: iv },
-    aad: { data: new Uint8Array(0) },
-    authTag: { data: new Uint8Array(0) }
-  };
-  await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, gcmParams);
-  const cipherText = await cipher.update({ data: plain });
-  const tag = await cipher.doFinal(null);
-  const ct = new Uint8Array(cipherText.data);
-  const tg = tag === null ? new Uint8Array(0) : new Uint8Array(tag.data);
-  const out = new Uint8Array(ct.length + tg.length);
-  out.set(ct, 0);
-  out.set(tg, ct.length);
-  return out;
-}
-
-/** AES-256-GCM è§£å¯†ï¼šè¾“å…¥ ciphertext â€– tagï¼ˆæœ«å°¾ 16 å­—èŠ‚ä¸º tagï¼‰ï¼Œè¿”å›æ˜æ–‡ã€‚ */
-export async function aesGcmDecrypt(cipherWithTag: Uint8Array, key: Uint8Array, iv: Uint8Array): Promise<Uint8Array> {
-  const tagLen = 16;
-  const cipherText = cipherWithTag.subarray(0, cipherWithTag.length - tagLen);
-  const tag = cipherWithTag.subarray(cipherWithTag.length - tagLen);
-  const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
-  const symKey: cryptoFramework.SymKey = await makeSymKey256(key);
-  const gcmParams: cryptoFramework.GcmParamsSpec = {
-    algName: 'GcmParamsSpec',
-    iv: { data: iv },
-    aad: { data: new Uint8Array(0) },
-    authTag: { data: tag }
-  };
-  await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, gcmParams);
-  const plain = await cipher.update({ data: cipherText });
-  await cipher.doFinal(null);
-  return new Uint8Array(plain.data);
-}
-
-async function makeSymKey256(key: Uint8Array): Promise<cryptoFramework.SymKey> {
-  const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES256');
-  const keyBlob: cryptoFramework.DataBlob = { data: key };
-  return await symKeyGenerator.convertKey(keyBlob);
-}
-
-ÀÔrE’¾@ohos.security.cryptoFrameworkª@ohos.utilÔrF—ªassertions¨external¢id¤meta±moduleSideEffectsªresolvedByµsyntheticNamedExportsAÃÙx hvigor_ignore_D:_Program Files_Huawei_DevEco Studio_sdk_default_openharmony_ets_api_@ohos.security.cryptoFramework.d.tsÔrG‘¯hostModulesInfo‘C¾@ohos.security.cryptoFramework¥entryÃªoh-resolveÂFAÃÙd hvigor_ignore_D:_Program Files_Huawei_DevEco Studio_sdk_default_openharmony_ets_api_@ohos.util.d.tsG‘Cª@ohos.util¥entryÃªoh-resolveÂ“ÔrH–§version¤fileªsourceRoot§sources¥names¨mappings«MiCrypto.js ‘¬MiCrypto.etsÜ Ù–”    ”  	”  ”   ”<  <”=  =–”   ” 	” ” ” !” "‘”   ‘” ˜”   ” ” ” ” ” ” ” *›” ”
- ” 
-” ” ” ”' %”( &”- +”. ,”/ -š” ”
- ” ” )” +” /” 1” 5” 7”  8™” ”
- ” 
-” ” ” ” ” ” š” ”
- ” ” ” ” ” ”"  ”$ "”% #™” ” 	” ” ” ” ” ” ” ’”   ” ˜”   ” ” ” ” ”! !”" "”, 8š” ”
- ” ” ” ” ” ”' %”( &”) '™” ”
- ” ” ” ” ” ” ”  Ü ” ”
- ” ” ” ”# !”$ "”' %”( &”. ,”1 /”; 9”< :”ÌB Ì@”ÌC ÌA”ÌD ÌBš” ” 
-” ” ” ” ” ” ” ” œ” ” 
-” ” ” ” ” ”  ”! ”' %”( &”) 'š” ”
- ” ” ” ” ” ”$ "”% #”& $™” ”
- ” 
-” ” ” ” ” ” ” ”
- ” ” ” ” ” ” "” $”! &”# (”% *”' ,”( -”” ” 	” ” ’”    ”  œ”  " ” "” "” "” "”# "#”$ "$”) "5”+ "7”. "ÌF”0 "ÌH”2 "ÌV›” #”
- #” #” #”" # ”# #!”/ #-”0 #.”ÌB #Ì@”ÌC #ÌA”ÌD #ÌBš” $”
- $” $” $)” $/”# $9”$ $:”' $=”( $>”) $?Ü ” %”
- %” %” %/” %1” %8” %:”, %ÌH”. %ÌJ”0 %ÌL”2 %ÌN”4 %ÌP”8 %ÌT”: %ÌV”< %ÌX”> %ÌZ”Ì@ %Ì\”ÌA %Ì]Ü ” &”
- &” &” &” &” &”% &#”& &$”0 &.”1 &/”= &;”? &=”ÌE &ÌC”ÌG &ÌE”ÌM &ÌK”ÌN &ÌL”ÌO &ÌMÜ ” '”
- '” '” '” '” '”  '”' '%”( '&”* '(”. ',”0 '.”5 '3”7 '5”8 '6”9 '7š” (” (	” (” (” (”  (”! (”% (#”& ($”' (%’”  ) ” )œ”  + ” +” +” +” +”# +#”$ +$”. +:”0 +<”3 +ÌK”5 +ÌM”7 +Ì[›” ,”
- ,” ,” ,”" , ”# ,!”/ ,-”0 ,.”ÌB ,Ì@”ÌC ,ÌA”ÌD ,ÌBš” -”
- -” -” -)” -/”# -9”$ -:”' -=”( ->”) -?Ü ” .”
- .” .” ./” .1” .8” .:”, .ÌH”. .ÌJ”0 .ÌL”2 .ÌN”4 .ÌP”8 .ÌT”: .ÌV”< .ÌX”> .ÌZ”Ì@ .Ì\”ÌA .Ì]Ü ” /”
- /” /” /” /” /”% /#”& /$”0 /.”1 //”= /;”? /=”ÌE /ÌC”ÌG /ÌE”ÌM /ÌK”ÌN /ÌL”ÌO /ÌMÜ ” 0”
- 0” 0” 0” 0” 0”  0”' 0%”( 0&”* 0(”. 0,”0 0.”: 08”< 0:”= 0;”> 0<š” 1” 1	” 1” 1” 1”  1”! 1”% 1#”& 1$”' 1%’”  2 ” 2–”  4 ” 4” 4” 4” 4” 4)›” 5”
- 5” 5” 5”+ 5)”, 5*”ÌA 5?”ÌB 5Ì@”ÌJ 5ÌH”ÌK 5ÌI”ÌL 5ÌJš” 6”
- 6” 6” 6,” 6.” 62” 64” 67”! 69”" 6:š” 7” 7	” 7”  7”! 7”+ 7)”, 7*”3 71”4 72”5 73’”  8 ” 8š”  : ” :” :” :” :”% :%”& :&”) :5”+ :7”. :ÌF›” ;”
- ;” ;” ;” ;”  ;”) ;'”* ;(”2 ;0”3 ;1”4 ;2›” <”
- <” <” <”" < ”# <!”8 <6”9 <7”ÌA <?”ÌB <Ì@”ÌC <ÌAš” =”
- =” =” =,” =.” =2” =4” =7”! =9”" =:œ” >”
- >” >” >)” >/” >5”  >6”* >Ì@”+ >ÌA”2 >ÌH”3 >ÌI”4 >ÌJ™” ?”
- ?” ?” ?” ?” ?” ?” ?” ?” Ì@”
- Ì@” Ì@” Ì@” Ì@” Ì@” Ì@” Ì@” Ì@”  Ì@”" Ì@ ”# Ì@!”$ Ì@"š” ÌA”
- ÌA” ÌA” ÌA” ÌA” ÌA” ÌA”! ÌA”# ÌA!”$ ÌA"š” ÌB” ÌB	” ÌB” ÌB” ÌB” ÌB” ÌB”" ÌB ”# ÌB!”$ ÌB"’”  ÌC ” ÌC˜”  ÌE ” ÌE” ÌE” ÌE” ÌE”! ÌE!”" ÌE"”& ÌE2›” ÌF”
- ÌF” ÌF
-” ÌF” ÌF” ÌF”' ÌF%”( ÌF&”0 ÌF.”1 ÌF/”2 ÌF0” ÌG”
- ÌG” ÌG
-” ÌG” ÌG” ÌG” ÌG” ÌG” ÌG”  ÌG”" ÌG ”# ÌG!”$ ÌG"š” ÌH”
- ÌH” ÌH” ÌH” ÌH” ÌH” ÌH”" ÌH ”$ ÌH"”% ÌH#š” ÌI” ÌI	” ÌI” ÌI” ÌI”  ÌI”! ÌI”% ÌI#”& ÌI$”' ÌI%’”  ÌJ ” ÌJ–”  ÌL ” ÌL” ÌL” ÌL” ÌL”! ÌL-š” ÌM”
- ÌM” ÌM” ÌM” ÌM” ÌM” ÌM”( ÌM&”* ÌM(”+ ÌM)™” ÌN” ÌN	” ÌN” ÌN”$ ÌN"”% ÌN#”) ÌN'”* ÌN(”+ ÌN)’”  ÌO ” ÌO–”  ÌQ ” ÌQ” ÌQ” ÌQ” ÌQ” ÌQ&š” ÌR”
- ÌR” ÌR” ÌR” ÌR” ÌR” ÌR”( ÌR&”* ÌR(”+ ÌR)’” ÌS”1 ÌS/’” ÌT”ÌJ ÌTÌH–” ÌU” ÌU” ÌU” ÌU” ÌU” ÌUÜ ” ÌV”	 ÌV” ÌV” ÌV” ÌV” ÌV” ÌV” ÌV” ÌV” ÌV” ÌV”  ÌV”" ÌV ”# ÌV!”% ÌV#”' ÌV%›” ÌW” ÌW
-” ÌW” ÌW” ÌW” ÌW” ÌW” ÌW” ÌW” ÌW” ÌWÜ !” ÌX” ÌX
-” ÌX” ÌX” ÌX” ÌX” ÌX” ÌX”  ÌX”! ÌX”% ÌX!”( ÌX$”) ÌX%”- ÌX)”. ÌX*”/ ÌX+”3 ÌX/”6 ÌX2”: ÌX6”; ÌX7”? ÌX;”ÌB ÌX>”ÌC ÌX?”ÌG ÌXÌC”ÌH ÌXÌD”ÌI ÌXÌE”ÌM ÌXÌI”ÌP ÌXÌL”ÌT ÌXÌP”ÌU ÌXÌQ”ÌY ÌXÌU”Ì\ ÌXÌX”Ì] ÌXÌY” ÌY	” ÌY
-” ÌY” ÌY” ÌY” ÌY”" ÌY”% ÌY”) ÌY#”* ÌY$”/ ÌY)”2 ÌY,”3 ÌY-”” ÌZ” ÌZ” ÌZ
-” ÌZ•” Ì[” Ì[” Ì[” Ì[” Ì[‘”	 Ì\‘” Ì]’” Ì^”< Ì^:” Ì_”
- Ì_” Ì_” Ì_” Ì_” Ì_”! Ì_”" Ì_ ”' Ì_%”) Ì_'”+ Ì_)”, Ì_*”- Ì_+–” Ì`” Ì`” Ì`” Ì`” Ì`” Ì`˜” Ìa” Ìa” Ìa” Ìa” Ìa” Ìa”  Ìa”! Ìa‘” Ìb’” Ìc”< Ìc:š” Ìd”
- Ìd” Ìd” Ìd” Ìd” Ìd” Ìd” Ìd”  Ìd”! Ìd–” Ìe” Ìe” Ìe” Ìe” Ìe” Ìe–” Ìf” Ìf” Ìf	” Ìf” Ìf” ÌfÜ ” Ìg” Ìg	” Ìg” Ìg” Ìg” Ìg” Ìg” Ìg” Ìg” Ìg”  Ìg”# Ìg”% Ìg!”& Ìg"”( Ìg$”* Ìg&•” Ìh” Ìh” Ìh” Ìh” Ìh‘”	 Ìi‘” Ìj” Ìk” Ìk	” Ìk” Ìk” Ìk”  Ìk”! Ìk”+ Ìk)”, Ìk*”3 Ìk1”4 Ìk2”5 Ìk3”6 Ìk4’”  Ìl ” Ìl–”  Ìn ” Ìn” Ìn” Ìn” Ìn” Ìn%š” Ìo”
- Ìo” Ìo	” Ìo” Ìo” Ìo” Ìo” Ìo” Ìo”  Ìo” Ìp”	 Ìp” Ìp” Ìp” Ìp” Ìp” Ìp” Ìp” Ìp” Ìp” Ìp” Ìp” Ìp”  ÌpÜ ” Ìq”	 Ìq”
- Ìq” Ìq” Ìq” Ìq” Ìq” Ìq” Ìq” Ìq” Ìq” Ìq”% Ìq!”' Ìq#”* Ìq&”- Ìq)”. Ìq*”/ Ìq+‘” Ìr”” Ìs” Ìs	” Ìs
-” Ìs’”  Ìt ” Ìt–”  Ìv ” Ìv” Ìv” Ìv” Ìv” Ìv&–” Ìw” Ìw”	 Ìw” Ìw
-” Ìw” ÌwÜ ” Ìx”	 Ìx” Ìx” Ìx” Ìx” Ìx” Ìx” Ìx” Ìx” Ìx” Ìx”# Ìx!”% Ìx#”& Ìx$”( Ìx&”* Ìx(Ü ” Ìy”	 Ìy” Ìy	” Ìy” Ìy” Ìy” Ìy” Ìy” Ìy” Ìy”  Ìy”! Ìy”" Ìy”* Ìy&”+ Ìy'”, Ìy(”. Ìy*”1 Ìy-”2 Ìy.”3 Ìy/‘” Ìz”” Ì{” Ì{	” Ì{
-” Ì{’”  Ì| ” Ì|–”  Ì~ ” Ì~” Ì~” Ì~” Ì~” Ì~#” Ì”
- Ì” Ì” Ì” Ì”  Ì”! Ì”$ Ì"”% Ì#”+ Ì)”. Ì,”/ Ì-”0 Ì.”1 Ì/Ü ” Ì€”	 Ì€” Ì€” Ì€” Ì€” Ì€” Ì€” Ì€” Ì€” Ì€” Ì€”" Ì€ ”$ Ì€"”% Ì€#”) Ì€'”* Ì€(”, Ì€*Ü ” Ì” Ì	” Ì
-” Ì” Ì” Ì” Ì” Ì” Ì”  Ì”# Ì”$ Ì ”- Ì)”. Ì*”/ Ì+”1 Ì-”2 Ì.”5 Ì1”6 Ì2”7 Ì3”9 Ì5”; Ì7”< Ì8”= Ì9‘” Ì‚”” Ìƒ” Ìƒ	” Ìƒ” Ìƒ’”  Ì„ ” Ì„–”  Ì† ” Ì†” Ì†” Ì†” Ì†” Ì†%š” Ì‡”
- Ì‡” Ì‡” Ì‡” Ì‡”  Ì‡”! Ì‡”, Ì‡*”. Ì‡,”/ Ì‡-Ÿ” Ìˆ”
- Ìˆ” Ìˆ” Ìˆ” Ìˆ”! Ìˆ”" Ìˆ ”- Ìˆ+”. Ìˆ,”8 Ìˆ6”9 Ìˆ7”< Ìˆ:”= Ìˆ;”> Ìˆ<”? Ìˆ=”” Ì‰” Ì‰	” Ì‰” Ì‰’”  ÌŠ ” ÌŠ–”  ÌŒ ” ÌŒ” ÌŒ” ÌŒ” ÌŒ” ÌŒ+” Ì”
- Ì” Ì” Ì” Ì” Ì”( Ì&”) Ì'”/ Ì-”0 Ì.”7 Ì5”8 Ì6”9 Ì7™” Ì” Ì	” Ì” Ì”% Ì#”& Ì$”* Ì(”+ Ì)”, Ì*’”  Ì ” Ì‘”  Ì‘ ‘” Ì”›”  Ì• ” Ì•” Ì•” Ì•” Ì•” Ì•(” Ì•*”" Ì•:”$ Ì•<”+ Ì•ÌK”, Ì•ÌLš” Ì–”
- Ì–” Ì–	” Ì–” Ì–” Ì–” Ì–(” Ì–+” Ì–,” Ì–-” Ì—”	 Ì—” Ì—” Ì—” Ì—” Ì—” Ì—” Ì—” Ì—” Ì—” Ì—” Ì—”  Ì—”" Ì— ˜” Ì˜”	 Ì˜”
- Ì˜” Ì˜” Ì˜” Ì˜” Ì˜” Ì˜‘” Ì™–” Ìš” Ìš”	 Ìš” Ìš
-” Ìš” Ìš” Ì›”	 Ì›” Ì›” Ì›” Ì›” Ì›” Ì›” Ì›” Ì›” Ì›” Ì›” Ì›”  Ì›”" Ì› Ü ” Ìœ”	 Ìœ” Ìœ” Ìœ	” Ìœ
-” Ìœ” Ìœ” Ìœ” Ìœ” Ìœ” Ìœ” Ìœ” Ìœ” Ìœ”  Ìœ”# Ìœ”$ Ìœ ”* Ìœ&”+ Ìœ'”, Ìœ(”/ Ìœ+”3 Ìœ/”4 Ìœ0™” Ì” Ì
-” Ì” Ì” Ì” Ì” Ì” Ì” Ì›” Ì”	 Ì”
- Ì” Ì” Ì” Ì” Ì” Ì” Ì” Ì” Ì˜” ÌŸ”	 ÌŸ”
- ÌŸ” ÌŸ” ÌŸ” ÌŸ” ÌŸ” ÌŸ‘” Ì ’” Ì¡”* Ì¡(–” Ì¢” Ì¢”	 Ì¢” Ì¢
-” Ì¢” Ì¢–” Ì£” Ì£”	 Ì£” Ì£
-” Ì£” Ì£” Ì¤”	 Ì¤” Ì¤” Ì¤” Ì¤” Ì¤” Ì¤” Ì¤” Ì¤” Ì¤” Ì¤” Ì¤”! Ì¤”# Ì¤!›” Ì¥”	 Ì¥” Ì¥” Ì¥	” Ì¥
-” Ì¥” Ì¥” Ì¥” Ì¥” Ì¥” Ì¥” Ì¦”	 Ì¦” Ì¦” Ì¦	” Ì¦
-” Ì¦” Ì¦” Ì¦” Ì¦” Ì¦” Ì¦” Ì¦” Ì¦” Ì¦™” Ì§” Ì§
-” Ì§” Ì§” Ì§” Ì§” Ì§” Ì§” Ì§›” Ì¨”	 Ì¨”
- Ì¨” Ì¨” Ì¨” Ì¨” Ì¨” Ì¨” Ì¨” Ì¨” Ì¨˜” Ì©”	 Ì©”
- Ì©” Ì©” Ì©” Ì©” Ì©” Ì©‘” Ìª’” Ì«” Ì«œ” Ì¬”
- Ì¬” Ì¬” Ì¬” Ì¬” Ì¬” Ì¬”# Ì¬!”$ Ì¬"”* Ì¬(”+ Ì¬)”, Ì¬*Ü ” Ì­”	 Ì­” Ì­” Ì­” Ì­” Ì­” Ì­” Ì­” Ì­” Ì­” Ì­”# Ì­!”% Ì­#”& Ì­$”( Ì­&”* Ì­(›” Ì®”	 Ì®” Ì®” Ì®	” Ì®
-” Ì®” Ì®” Ì®” Ì®” Ì®” Ì®” Ì¯”	 Ì¯” Ì¯” Ì¯	” Ì¯
-” Ì¯” Ì¯” Ì¯” Ì¯” Ì¯” Ì¯” Ì¯” Ì¯” Ì¯™” Ì°” Ì°
-” Ì°” Ì°” Ì°” Ì°” Ì°” Ì°” Ì°›” Ì±”	 Ì±”
- Ì±” Ì±” Ì±” Ì±” Ì±” Ì±” Ì±” Ì±” Ì±˜” Ì²”	 Ì²”
- Ì²” Ì²” Ì²” Ì²” Ì²” Ì²Ü ” Ì³” Ì³
-” Ì³” Ì³” Ì³” Ì³” Ì³” Ì³” Ì³”  Ì³”! Ì³”$ Ì³ ”% Ì³!”& Ì³"”' Ì³#”( Ì³$”) Ì³%”, Ì³(”0 Ì³,”1 Ì³-”2 Ì³.” Ì´” Ì´” Ì´” Ì´	” Ì´
-” Ì´” Ì´” Ì´” Ì´” Ì´” Ì´”$ Ì´ ”% Ì´!‘” Ìµ”” Ì¶” Ì¶	” Ì¶” Ì¶’”  Ì· ” Ì·’”  Ì¹ ” Ì¹˜”  Ìº ” Ìº” Ìº” Ìº” Ìº” Ìº”  Ìº ”$ Ìº0›” Ì»”
- Ì»” Ì»
-” Ì»” Ì»” Ì»”' Ì»%”( Ì»&”. Ì»,”/ Ì»-”0 Ì».” Ì¼”
- Ì¼” Ì¼
-” Ì¼” Ì¼” Ì¼” Ì¼” Ì¼” Ì¼”  Ì¼”" Ì¼ ”# Ì¼!”$ Ì¼"š” Ì½”
- Ì½” Ì½” Ì½” Ì½” Ì½” Ì½”" Ì½ ”$ Ì½"”% Ì½#š” Ì¾” Ì¾	” Ì¾” Ì¾” Ì¾”  Ì¾”! Ì¾”% Ì¾#”& Ì¾$”' Ì¾%’”  Ì¿ ” Ì¿‘”  ÌÁ ‘” ÌÆœ”  ÌÇ ” ÌÇ” ÌÇ” ÌÇ” ÌÇ”# ÌÇ#”$ ÌÇ$”) ÌÇ5”+ ÌÇ7”. ÌÇÌF”0 ÌÇÌH”2 ÌÇÌV›” ÌÈ”
- ÌÈ” ÌÈ” ÌÈ”" ÌÈ ”# ÌÈ!”/ ÌÈ-”0 ÌÈ.”ÌF ÌÈÌD”ÌG ÌÈÌE”ÌH ÌÈÌFš” ÌÉ”
- ÌÉ” ÌÉ” ÌÉ)” ÌÉ/”& ÌÉ<”' ÌÉ=”* ÌÉÌ@”+ ÌÉÌA”, ÌÉÌB”” ÌÊ”
- ÌÊ” ÌÊ” ÌÊ3”” ÌË” ÌË” ÌË”  ÌË˜” ÌÌ”
- ÌÌ” ÌÌ” ÌÌ
-” ÌÌ” ÌÌ” ÌÌ” ÌÌœ” ÌÍ” ÌÍ” ÌÍ	” ÌÍ” ÌÍ” ÌÍ” ÌÍ”# ÌÍ”$ ÌÍ ”% ÌÍ!”& ÌÍ"”( ÌÍ$œ” ÌÎ” ÌÎ” ÌÎ” ÌÎ” ÌÎ” ÌÎ” ÌÎ”' ÌÎ#”( ÌÎ$”) ÌÎ%”* ÌÎ&”, ÌÎ(’” ÌÏ” ÌÏÜ ” ÌĞ”
- ÌĞ” ÌĞ” ÌĞ” ÌĞ” ÌĞ”% ÌĞ#”& ÌĞ$”0 ÌĞ.”1 ÌĞ/”= ÌĞ;”? ÌĞ=”ÌE ÌĞÌC”ÌG ÌĞÌE”ÌP ÌĞÌN”ÌQ ÌĞÌO”ÌR ÌĞÌPÜ ” ÌÑ”
- ÌÑ” ÌÑ” ÌÑ” ÌÑ”# ÌÑ!”$ ÌÑ"”* ÌÑ(”+ ÌÑ)”- ÌÑ+”1 ÌÑ/”3 ÌÑ1”8 ÌÑ6”: ÌÑ8”; ÌÑ9”< ÌÑ:œ” ÌÒ”
- ÌÒ” ÌÒ” ÌÒ” ÌÒ” ÌÒ” ÌÒ”$ ÌÒ"”% ÌÒ#”) ÌÒ'”* ÌÒ(”+ ÌÒ)œ” ÌÓ”
- ÌÓ” ÌÓ
-” ÌÓ” ÌÓ” ÌÓ” ÌÓ”( ÌÓ&”) ÌÓ'”- ÌÓ+”. ÌÓ,”/ ÌÓ-Ü ” ÌÔ”
- ÌÔ” ÌÔ
-” ÌÔ” ÌÔ” ÌÔ” ÌÔ” ÌÔ” ÌÔ” ÌÔ”" ÌÔ ”, ÌÔ*”- ÌÔ+”. ÌÔ,”/ ÌÔ-”0 ÌÔ.”1 ÌÔ/”2 ÌÔ0”6 ÌÔ4”Ì@ ÌÔ>”ÌA ÌÔ?”ÌD ÌÔÌB”ÌE ÌÔÌC”ÌI ÌÔÌG”ÌJ ÌÔÌH”ÌK ÌÔÌIÜ ” ÌÕ”
- ÌÕ” ÌÕ” ÌÕ” ÌÕ” ÌÕ” ÌÕ”! ÌÕ”" ÌÕ ”( ÌÕ&”+ ÌÕ)”- ÌÕ+”. ÌÕ,”4 ÌÕ2”5 ÌÕ3”6 ÌÕ4š” ÌÖ” ÌÖ” ÌÖ” ÌÖ	” ÌÖ
-” ÌÖ” ÌÖ” ÌÖ” ÌÖ” ÌÖœ” Ì×” Ì×” Ì×” Ì×	” Ì×
-” Ì×” Ì×” Ì×” Ì×” Ì×” Ì×” Ì×”” ÌØ” ÌØ	” ÌØ” ÌØ’”  ÌÙ ” ÌÙ’”  ÌÛ ”> ÌÛ>œ”  ÌÜ ” ÌÜ” ÌÜ” ÌÜ” ÌÜ”# ÌÜ#”$ ÌÜ$”1 ÌÜ=”3 ÌÜ?”6 ÌÜÌN”8 ÌÜÌP”: ÌÜÌ^–” Ìİ”
- Ìİ” Ìİ” Ìİ” Ìİ” ÌİÜ ” ÌŞ”
- ÌŞ” ÌŞ” ÌŞ”$ ÌŞ"”% ÌŞ#”- ÌŞ+”. ÌŞ,”/ ÌŞ-”1 ÌŞ/”> ÌŞ<”? ÌŞ=”ÌE ÌŞÌC”ÌH ÌŞÌF”ÌN ÌŞÌL”ÌO ÌŞÌM”ÌP ÌŞÌNŸ” Ìß”
- Ìß” Ìß” Ìß” Ìß” Ìß”& Ìß$”' Ìß%”4 Ìß2”5 Ìß3”; Ìß9”> Ìß<”ÌD ÌßÌB”ÌE ÌßÌC”ÌF ÌßÌD›” Ìà”
- Ìà” Ìà” Ìà”" Ìà ”# Ìà!”/ Ìà-”0 Ìà.”ÌF ÌàÌD”ÌG ÌàÌE”ÌH ÌàÌFš” Ìá”
- Ìá” Ìá” Ìá)” Ìá/”& Ìá<”' Ìá=”* ÌáÌ@”+ ÌáÌA”, ÌáÌB”” Ìâ”
- Ìâ” Ìâ” Ìâ3”” Ìã” Ìã” Ìã”  Ìã˜” Ìä”
- Ìä” Ìä” Ìä
-” Ìä” Ìä” Ìä” Ìäœ” Ìå” Ìå” Ìå	” Ìå” Ìå” Ìå” Ìå”# Ìå”$ Ìå ”% Ìå!”& Ìå"”( Ìå$˜” Ìæ” Ìæ” Ìæ” Ìæ” Ìæ” Ìæ” Ìæ” Ìæ’” Ìç” ÌçÜ ” Ìè”
- Ìè” Ìè” Ìè” Ìè” Ìè”% Ìè#”& Ìè$”0 Ìè.”1 Ìè/”= Ìè;”? Ìè=”ÌE ÌèÌC”ÌG ÌèÌE”ÌP ÌèÌN”ÌQ ÌèÌO”ÌR ÌèÌPÜ ” Ìé”
- Ìé” Ìé” Ìé” Ìé” Ìé” Ìé”% Ìé#”& Ìé$”( Ìé&”, Ìé*”. Ìé,”8 Ìé6”: Ìé8”; Ìé9”< Ìé:™” Ìê”
- Ìê” Ìê” Ìê” Ìê” Ìê” Ìê” Ìê” Ìêš” Ìë” Ìë	” Ìë” Ìë” Ìë” Ìë”  Ìë”$ Ìë"”% Ìë#”& Ìë$’”  Ìì ” Ìì–”  Ìî ” Ìî” Ìî” Ìî” Ìî”  Ìî,›” Ìï”
- Ìï” Ìï” Ìï”+ Ìï)”, Ìï*”ÌA Ìï?”ÌB ÌïÌ@”ÌJ ÌïÌH”ÌK ÌïÌI”ÌL ÌïÌJš” Ìğ”
- Ìğ” Ìğ” Ìğ,” Ìğ.” Ìğ2” Ìğ4” Ìğ7”! Ìğ9”" Ìğ:š” Ìñ” Ìñ	” Ìñ”  Ìñ”! Ìñ”+ Ìñ)”, Ìñ*”3 Ìñ1”4 Ìñ2”5 Ìñ3’”  Ìò ” ÌòÔrI–§version¤file§sources®sourcesContent¥names¨mappingsÀ‘À‘ÀÜ Ú‘”    ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”  	 ‘”  
- ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”   ‘”    ‘”  ! ‘”  " ‘”  # ‘”  $ ‘”  % ‘”  & ‘”  ' ‘”  ( ‘”  ) ‘”  * ‘”  + ‘”  , ‘”  - ‘”  . ‘”  / ‘”  0 ‘”  1 ‘”  2 ‘”  3 ‘”  4 ‘”  5 ‘”  6 ‘”  7 ‘”  8 ‘”  9 ‘”  : ‘”  ; ‘”  < ‘”  = ‘”  > ‘”  ? ‘”  Ì@ ‘”  ÌA ‘”  ÌB ‘”  ÌC ‘”  ÌD ‘”  ÌE ‘”  ÌF ‘”  ÌG ‘”  ÌH ‘”  ÌI ‘”  ÌJ ‘”  ÌK ‘”  ÌL ‘”  ÌM ‘”  ÌN ‘”  ÌO ‘”  ÌP ‘”  ÌQ ‘”  ÌR ‘”  ÌS ‘”  ÌT ‘”  ÌU ‘”  ÌV ‘”  ÌW ‘”  ÌX ‘”  ÌY ‘”  ÌZ ‘”  Ì[ ‘”  Ì\ ‘”  Ì] ‘”  Ì^ ‘”  Ì_ ‘”  Ì` ‘”  Ìa ‘”  Ìb ‘”  Ìc ‘”  Ìd ‘”  Ìe ‘”  Ìf ‘”  Ìg ‘”  Ìh ‘”  Ìi ‘”  Ìj ‘”  Ìk ‘”  Ìl ‘”  Ìm ‘”  Ìn ‘”  Ìo ‘”  Ìp ‘”  Ìq ‘”  Ìr ‘”  Ìs ‘”  Ìt ‘”  Ìu ‘”  Ìv ‘”  Ìw ‘”  Ìx ‘”  Ìy ‘”  Ìz ‘”  Ì{ ‘”  Ì| ‘”  Ì} ‘”  Ì~ ‘”  Ì ‘”  Ì€ ‘”  Ì ‘”  Ì‚ ‘”  Ìƒ ‘”  Ì„ ‘”  Ì… ‘”  Ì† ‘”  Ì‡ ‘”  Ìˆ ‘”  Ì‰ ‘”  ÌŠ ‘”  Ì‹ ‘”  ÌŒ ‘”  Ì ‘”  Ì ‘”  Ì ‘”  Ì ‘”  Ì‘ ‘”  Ì’ ‘”  Ì“ ‘”  Ì” ‘”  Ì• ‘”  Ì– ‘”  Ì— ‘”  Ì˜ ‘”  Ì™ ‘”  Ìš ‘”  Ì› ‘”  Ìœ ‘”  Ì ‘”  Ì ‘”  ÌŸ ‘”  Ì  ‘”  Ì¡ ‘”  Ì¢ ‘”  Ì£ ‘”  Ì¤ ‘”  Ì¥ ‘”  Ì¦ ‘”  Ì§ ‘”  Ì¨ ‘”  Ì© ‘”  Ìª ‘”  Ì« ‘”  Ì¬ ‘”  Ì­ ‘”  Ì® ‘”  Ì¯ ‘”  Ì° ‘”  Ì± ‘”  Ì² ‘”  Ì³ ‘”  Ì´ ‘”  Ìµ ‘”  Ì¶ ‘”  Ì· ‘”  Ì¸ ‘”  Ì¹ ‘”  Ìº ‘”  Ì» ‘”  Ì¼ ‘”  Ì½ ‘”  Ì¾ ‘”  Ì¿ ‘”  ÌÀ ‘”  ÌÁ ‘”  ÌÂ ‘”  ÌÃ ‘”  ÌÄ ‘”  ÌÅ ‘”  ÌÆ ‘”  ÌÇ ‘”  ÌÈ ‘”  ÌÉ ‘”  ÌÊ ‘”  ÌË ‘”  ÌÌ ‘”  ÌÍ ‘”  ÌÎ ‘”  ÌÏ ‘”  ÌĞ ‘”  ÌÑ ‘”  ÌÒ ‘”  ÌÓ ‘”  ÌÔ ‘”  ÌÕ ‘”  ÌÖ ‘”  Ì× ‘”  ÌØ ‘”  ÌÙ ÔrJ’§missing¦pluginÃ¦genAbcÂÔ  ÔrK”²dynamicImportCache¹exportAllDeclarationCache»exportNamedDeclarationCache«importCacheÜ ÔrL–¤type¥start£end«declarationªspecifiers¦source¶ExportNamedDeclarationÌÑÍ«ÔrM™¤type¥start£end¢idªexpression©generator¥async¦params¤body³FunctionDeclarationÌØÍ«ÔrN”¤type¥start£end¤nameªIdentifierÌçÌê£md5ÂÂÃ‘NªIdentifierÌëÌï¤dataÔrO”¤type¥start£end¤body®BlockStatementÌñÍ«•ÔrP•¤type¥start£end¬declarations¤kind³VariableDeclarationÌøÍ#‘ÔrQ•¤type¥start£end¢id¤init²VariableDeclaratorÌşÍ"NªIdentifierÌşÍ ¢mdÔrR–¤type¥start£end¦callee©arguments¨optional®CallExpressionÍÍ"ÔrS—¤type¥start£end¦object¨property¨computed¨optional°MemberExpressionÍÍNªIdentifierÍÍ¯cryptoFrameworkNªIdentifierÍÍ¨createMdÂÂ‘ÔrT•¤type¥start£end¥value£raw§LiteralÍÍ!£MD5¥'MD5'Â¥constP³VariableDeclarationÍ)ÍE‘Q²VariableDeclaratorÍ/ÍDNªIdentifierÍ/Í3¤blobÔrU”¤type¥start£endªproperties°ObjectExpressionÍ6ÍD‘ÔrV™¤type¥start£end¦method©shorthand¨computed£key¥value¤kind¨PropertyÍ8ÍBÂÂÂNªIdentifierÍ8Í<¤dataNªIdentifierÍ>ÍB¤data¤init¥constÔrW”¤type¥start£endªexpression³ExpressionStatementÍKÍaÔrX”¤type¥start£end¨argument¯AwaitExpressionÍKÍ`R®CallExpressionÍQÍ`S°MemberExpressionÍQÍZNªIdentifierÍQÍS¢mdNªIdentifierÍTÍZ¦updateÂÂ‘NªIdentifierÍ[Í_¤blobÂP³VariableDeclarationÍgÍˆ‘Q²VariableDeclaratorÍmÍ‡NªIdentifierÍmÍs¦digestX¯AwaitExpressionÍvÍ‡R®CallExpressionÍ|Í‡S°MemberExpressionÍ|Í…NªIdentifierÍ|Í~¢mdNªIdentifierÍÍ…¦digestÂÂÂ¥constX¯ReturnStatementÍÍ¨R®CallExpressionÍ•Í§NªIdentifierÍ•Íš¥toHex‘S°MemberExpressionÍ›Í¦NªIdentifierÍ›Í¡¦digestNªIdentifierÍ¢Í¦¤dataÂÂÂÀL¶ExportNamedDeclarationÍ­Í>M³FunctionDeclarationÍ´Í>NªIdentifierÍÃÍÎ«deriveKeyIvÂÂÃ‘NªIdentifierÍÏÍÙªtokenBytesO®BlockStatementÍÛÍ>™P³VariableDeclarationÍâÍ‘Q²VariableDeclaratorÍèÍNªIdentifierÍèÍî¦keyHexX¯AwaitExpressionÍñÍR®CallExpressionÍ÷ÍNªIdentifierÍ÷Íú£md5‘NªIdentifierÍûÍªtokenBytesÂ¥constP³VariableDeclarationÍÍ)‘Q²VariableDeclaratorÍÍ(NªIdentifierÍÍ£keyR®CallExpressionÍÍ(NªIdentifierÍÍ §fromHex‘NªIdentifierÍ!Í'¦keyHexÂ¥constP³VariableDeclarationÍ/Ío‘Q²VariableDeclaratorÍ5ÍnNªIdentifierÍ5Í=¨combinedÔrY•¤type¥start£end¦callee©arguments­NewExpressionÍ@ÍnNªIdentifierÍDÍNªUint8Array‘ÔrZ–¤type¥start£end¤left¨operator¥right°BinaryExpressionÍOÍmS°MemberExpressionÍOÍYNªIdentifierÍOÍR£keyNªIdentifierÍSÍY¦lengthÂÂ¡+S°MemberExpressionÍ\ÍmNªIdentifierÍ\ÍfªtokenBytesNªIdentifierÍgÍm¦lengthÂÂ¥constW³ExpressionStatementÍuÍŠR®CallExpressionÍuÍ‰S°MemberExpressionÍuÍNªIdentifierÍuÍ}¨combinedNªIdentifierÍ~Í£setÂÂ’NªIdentifierÍ‚Í…£keyT§LiteralÍ‡Íˆ ¡0ÂW³ExpressionStatementÍÍµR®CallExpressionÍÍ´S°MemberExpressionÍÍœNªIdentifierÍÍ˜¨combinedNªIdentifierÍ™Íœ£setÂÂ’NªIdentifierÍÍ§ªtokenBytesS°MemberExpressionÍ©Í³NªIdentifierÍ©Í¬£keyNªIdentifierÍ­Í³¦lengthÂÂÂP³VariableDeclarationÍ»Íİ‘Q²VariableDeclaratorÍÁÍÜNªIdentifierÍÁÍÆ¥ivHexX¯AwaitExpressionÍÉÍÜR®CallExpressionÍÏÍÜNªIdentifierÍÏÍÒ£md5‘NªIdentifierÍÓÍÛ¨combinedÂ¥constP³VariableDeclarationÍãÍı‘Q²VariableDeclaratorÍéÍüNªIdentifierÍéÍë¢ivR®CallExpressionÍîÍüNªIdentifierÍîÍõ§fromHex‘NªIdentifierÍöÍû¥ivHexÂ¥constP³VariableDeclarationÍÍ'‘Q²VariableDeclaratorÍ	Í&NªIdentifierÍ	Í¦resultU°ObjectExpressionÍÍ&’V¨PropertyÍÍÂÂÂNªIdentifierÍÍ£keyNªIdentifierÍÍ£key¤initV¨PropertyÍÍ$ÂÂÂNªIdentifierÍÍ ¢ivNªIdentifierÍ"Í$¢iv¤init¥constX¯ReturnStatementÍ-Í;NªIdentifierÍ4Í:¦resultÀL¶ExportNamedDeclarationÍ@ÍáM³FunctionDeclarationÍGÍáNªIdentifierÍVÍc­aesCbcEncryptÂÂÃ“NªIdentifierÍdÍi¥plainNªIdentifierÍkÍn£keyNªIdentifierÍpÍr¢ivO®BlockStatementÍtÍá–P³VariableDeclarationÍ{Í»‘Q²VariableDeclaratorÍÍºNªIdentifierÍÍ‡¦cipherR®CallExpressionÍŠÍºS°MemberExpressionÍŠÍ¦NªIdentifierÍŠÍ™¯cryptoFrameworkNªIdentifierÍšÍ¦¬createCipherÂÂ‘T§LiteralÍ§Í¹°AES128|CBC|PKCS7²'AES128|CBC|PKCS7'Â¥constP³VariableDeclarationÍÁÍæ‘Q²VariableDeclaratorÍÇÍåNªIdentifierÍÇÍÍ¦symKeyX¯AwaitExpressionÍĞÍåR®CallExpressionÍÖÍåNªIdentifierÍÖÍàªmakeSymKey‘NªIdentifierÍáÍä£keyÂ¥constP³VariableDeclarationÍìÍ)‘Q²VariableDeclaratorÍòÍ(NªIdentifierÍòÍø¦ivSpecU°ObjectExpressionÍûÍ(’V¨PropertyÍıÍÂÂÂNªIdentifierÍıÍ§algNameT§LiteralÍÍ¬IvParamsSpec®'IvParamsSpec'¤initV¨PropertyÍÍ&ÂÂÂNªIdentifierÍÍ¢ivU°ObjectExpressionÍÍ&‘V¨PropertyÍÍ$ÂÂÂNªIdentifierÍÍ ¤dataNªIdentifierÍ"Í$¢iv¤init¤init¥constW³ExpressionStatementÍ/ÍzX¯AwaitExpressionÍ/ÍyR®CallExpressionÍ5ÍyS°MemberExpressionÍ5Í@NªIdentifierÍ5Í;¦cipherNªIdentifierÍ<Í@¤initÂÂ“S°MemberExpressionÍAÍhS°MemberExpressionÍAÍ[NªIdentifierÍAÍP¯cryptoFrameworkNªIdentifierÍQÍ[ªCryptoModeÂÂNªIdentifierÍ\Íh¬ENCRYPT_MODEÂÂNªIdentifierÍjÍp¦symKeyNªIdentifierÍrÍx¦ivSpecÂP³VariableDeclarationÍ€Íµ‘Q²VariableDeclaratorÍ†Í´NªIdentifierÍ†ÍŒ¦resultX¯AwaitExpressionÍÍ´R®CallExpressionÍ•Í´S°MemberExpressionÍ•Í£NªIdentifierÍ•Í›¦cipherNªIdentifierÍœÍ£§doFinalÂÂ‘U°ObjectExpressionÍ¤Í³‘V¨PropertyÍ¦Í±ÂÂÂNªIdentifierÍ¦Íª¤dataNªIdentifierÍ¬Í±¥plain¤initÂ¥constX¯ReturnStatementÍ»ÍŞY­NewExpressionÍÂÍİNªIdentifierÍÆÍĞªUint8Array‘S°MemberExpressionÍÑÍÜNªIdentifierÍÑÍ×¦resultNªIdentifierÍØÍÜ¤dataÂÂÀL¶ExportNamedDeclarationÍãÍM³FunctionDeclarationÍêÍNªIdentifierÍùÍ­aesCbcDecryptÂÂÃ“NªIdentifierÍÍªcipherTextNªIdentifierÍÍ£keyNªIdentifierÍÍ¢ivO®BlockStatementÍÍ–P³VariableDeclarationÍ#Íc‘Q²VariableDeclaratorÍ)ÍbNªIdentifierÍ)Í/¦cipherR®CallExpressionÍ2ÍbS°MemberExpressionÍ2ÍNNªIdentifierÍ2ÍA¯cryptoFrameworkNªIdentifierÍBÍN¬createCipherÂÂ‘T§LiteralÍOÍa°AES128|CBC|PKCS7²'AES128|CBC|PKCS7'Â¥constP³VariableDeclarationÍiÍ‘Q²VariableDeclaratorÍoÍNªIdentifierÍoÍu¦symKeyX¯AwaitExpressionÍxÍR®CallExpressionÍ~ÍNªIdentifierÍ~ÍˆªmakeSymKey‘NªIdentifierÍ‰ÍŒ£keyÂ¥constP³VariableDeclarationÍ”ÍÑ‘Q²VariableDeclaratorÍšÍĞNªIdentifierÍšÍ ¦ivSpecU°ObjectExpressionÍ£ÍĞ’V¨PropertyÍ¥Í¼ÂÂÂNªIdentifierÍ¥Í¬§algNameT§LiteralÍ®Í¼¬IvParamsSpec®'IvParamsSpec'¤initV¨PropertyÍ¾ÍÎÂÂÂNªIdentifierÍ¾ÍÀ¢ivU°ObjectExpressionÍÂÍÎ‘V¨PropertyÍÄÍÌÂÂÂNªIdentifierÍÄÍÈ¤dataNªIdentifierÍÊÍÌ¢iv¤init¤init¥constW³ExpressionStatementÍ×Í"X¯AwaitExpressionÍ×Í!R®CallExpressionÍİÍ!S°MemberExpressionÍİÍèNªIdentifierÍİÍã¦cipherNªIdentifierÍäÍè¤initÂÂ“S°MemberExpressionÍéÍS°MemberExpressionÍéÍNªIdentifierÍéÍø¯cryptoFrameworkNªIdentifierÍùÍªCryptoModeÂÂNªIdentifierÍÍ¬DECRYPT_MODEÂÂNªIdentifierÍÍ¦symKeyNªIdentifierÍÍ ¦ivSpecÂP³VariableDeclarationÍ(Íb‘Q²VariableDeclaratorÍ.ÍaNªIdentifierÍ.Í4¦resultX¯AwaitExpressionÍ7ÍaR®CallExpressionÍ=ÍaS°MemberExpressionÍ=ÍKNªIdentifierÍ=ÍC¦cipherNªIdentifierÍDÍK§doFinalÂÂ‘U°ObjectExpressionÍLÍ`‘V¨PropertyÍNÍ^ÂÂÂNªIdentifierÍNÍR¤dataNªIdentifierÍTÍ^ªcipherText¤initÂ¥constX¯ReturnStatementÍhÍ‹Y­NewExpressionÍoÍŠNªIdentifierÍsÍ}ªUint8Array‘S°MemberExpressionÍ~Í‰NªIdentifierÍ~Í„¦resultNªIdentifierÍ…Í‰¤dataÂÂÀL¶ExportNamedDeclarationÍ^ÍöM³FunctionDeclarationÍeÍöNªIdentifierÍtÍƒ¯hmacSha256BytesÂÂÃ’NªIdentifierÍ„Í‡£keyNªIdentifierÍ‰ÍŒ£msgO®BlockStatementÍÍö˜P³VariableDeclarationÍ•ÍÅ‘Q²VariableDeclaratorÍ›ÍÄNªIdentifierÍ›Í£macR®CallExpressionÍ¡ÍÄS°MemberExpressionÍ¡ÍºNªIdentifierÍ¡Í°¯cryptoFrameworkNªIdentifierÍ±Íº©createMacÂÂ‘T§LiteralÍ»ÍÃ¦SHA256¨'SHA256'Â¥constP³VariableDeclarationÍËÍ
-‘Q²VariableDeclaratorÍÑÍ	NªIdentifierÍÑÍ×¦keyGenR®CallExpressionÍÚÍ	S°MemberExpressionÍÚÍÿNªIdentifierÍÚÍé¯cryptoFrameworkNªIdentifierÍêÍÿµcreateSymKeyGeneratorÂÂ‘T§LiteralÍ Í¦SHA256¨'SHA256'Â¥constP³VariableDeclarationÍÍ.‘Q²VariableDeclaratorÍÍ-NªIdentifierÍÍ§keyBlobU°ObjectExpressionÍ Í-‘V¨PropertyÍ"Í+ÂÂÂNªIdentifierÍ"Í&¤dataNªIdentifierÍ(Í+£key¤init¥constP³VariableDeclarationÍ4Íd‘Q²VariableDeclaratorÍ:ÍcNªIdentifierÍ:Í@¦symKeyX¯AwaitExpressionÍCÍcR®CallExpressionÍIÍcS°MemberExpressionÍIÍZNªIdentifierÍIÍO¦keyGenNªIdentifierÍPÍZªconvertKeyÂÂ‘NªIdentifierÍ[Íb§keyBlobÂ¥constW³ExpressionStatementÍjÍX¯AwaitExpressionÍjÍ€R®CallExpressionÍpÍ€S°MemberExpressionÍpÍxNªIdentifierÍpÍs£macNªIdentifierÍtÍx¤initÂÂ‘NªIdentifierÍyÍ¦symKeyÂW³ExpressionStatementÍ‡Í§X¯AwaitExpressionÍ‡Í¦R®CallExpressionÍÍ¦S°MemberExpressionÍÍ—NªIdentifierÍÍ£macNªIdentifierÍ‘Í—¦updateÂÂ‘U°ObjectExpressionÍ˜Í¥‘V¨PropertyÍšÍ£ÂÂÂNªIdentifierÍšÍ¤dataNªIdentifierÍ Í££msg¤initÂP³VariableDeclarationÍ­ÍÍ‘Q²VariableDeclaratorÍ³ÍÌNªIdentifierÍ³Í¶£outX¯AwaitExpressionÍ¹ÍÌR®CallExpressionÍ¿ÍÌS°MemberExpressionÍ¿ÍÊNªIdentifierÍ¿ÍÂ£macNªIdentifierÍÃÍÊ§doFinalÂÂÂ¥constX¯ReturnStatementÍÓÍóY­NewExpressionÍÚÍòNªIdentifierÍŞÍèªUint8Array‘S°MemberExpressionÍéÍñNªIdentifierÍéÍì£outNªIdentifierÍíÍñ¤dataÂÂÀL¶ExportNamedDeclarationÍøÍ	ÎM³FunctionDeclarationÍÿÍ	ÎNªIdentifierÍ	Í	«sha256BytesÂÂÃ‘NªIdentifierÍ	Í	¤dataO®BlockStatementÍ	 Í	Î”P³VariableDeclarationÍ	'Í	U‘Q²VariableDeclaratorÍ	-Í	TNªIdentifierÍ	-Í	/¢mdR®CallExpressionÍ	2Í	TS°MemberExpressionÍ	2Í	JNªIdentifierÍ	2Í	A¯cryptoFrameworkNªIdentifierÍ	BÍ	J¨createMdÂÂ‘T§LiteralÍ	KÍ	S¦SHA256¨'SHA256'Â¥constW³ExpressionStatementÍ	[Í	{X¯AwaitExpressionÍ	[Í	zR®CallExpressionÍ	aÍ	zS°MemberExpressionÍ	aÍ	jNªIdentifierÍ	aÍ	c¢mdNªIdentifierÍ	dÍ	j¦updateÂÂ‘U°ObjectExpressionÍ	kÍ	y‘V¨PropertyÍ	mÍ	wÂÂÂNªIdentifierÍ	mÍ	q¤dataNªIdentifierÍ	sÍ	w¤data¤initÂP³VariableDeclarationÍ	Í	¢‘Q²VariableDeclaratorÍ	‡Í	¡NªIdentifierÍ	‡Í	¦digestX¯AwaitExpressionÍ	Í	¡R®CallExpressionÍ	–Í	¡S°MemberExpressionÍ	–Í	ŸNªIdentifierÍ	–Í	˜¢mdNªIdentifierÍ	™Í	Ÿ¦digestÂÂÂ¥constX¯ReturnStatementÍ	¨Í	ËY­NewExpressionÍ	¯Í	ÊNªIdentifierÍ	³Í	½ªUint8Array‘S°MemberExpressionÍ	¾Í	ÉNªIdentifierÍ	¾Í	Ä¦digestNªIdentifierÍ	ÅÍ	É¤dataÂÂÀL¶ExportNamedDeclarationÍ	ĞÍ
-QM³FunctionDeclarationÍ	×Í
-QNªIdentifierÍ	àÍ	ì¬base64EncodeÂÂÂ‘NªIdentifierÍ	íÍ	ñ¤dataO®BlockStatementÍ	óÍ
-Q’P³VariableDeclarationÍ	úÍ
-!‘Q²VariableDeclaratorÍ
- Í
- NªIdentifierÍ
- Í
-¦helperY­NewExpressionÍ
-	Í
- S°MemberExpressionÍ
-Í
-NªIdentifierÍ
-Í
-¤utilNªIdentifierÍ
-Í
-¬Base64HelperÂÂ¥constX¯ReturnStatementÍ
-'Í
-NR®CallExpressionÍ
-.Í
-MS°MemberExpressionÍ
-.Í
-GNªIdentifierÍ
-.Í
-4¦helperNªIdentifierÍ
-5Í
-G²encodeToStringSyncÂÂ‘NªIdentifierÍ
-HÍ
-L¤dataÂÀL¶ExportNamedDeclarationÍ
-SÍ-M³FunctionDeclarationÍ
-ZÍ-NªIdentifierÍ
-cÍ
-o¬base64DecodeÂÂÂ‘NªIdentifierÍ
-pÍ
-q¡sO®BlockStatementÍ
-sÍ-™P³VariableDeclarationÍ
-zÍ
-¡‘Q²VariableDeclaratorÍ
-€Í
- NªIdentifierÍ
-€Í
-†¦helperY­NewExpressionÍ
-‰Í
- S°MemberExpressionÍ
-Í
-NªIdentifierÍ
-Í
-‘¤utilNªIdentifierÍ
-’Í
-¬Base64HelperÂÂ¥constP³VariableDeclarationÍ&Í7‘Q²VariableDeclaratorÍ*Í6NªIdentifierÍ*Í1§cleanedT§LiteralÍ4Í6 ¢''£letÔr[—¤type¥start£end¤init¤test¦update¤body¬ForStatementÍ=ÍUP³VariableDeclarationÍBÍK‘Q²VariableDeclaratorÍFÍKNªIdentifierÍFÍG¡iT§LiteralÍJÍK ¡0£letZ°BinaryExpressionÍMÍYNªIdentifierÍMÍN¡i¡<S°MemberExpressionÍQÍYNªIdentifierÍQÍR¡sNªIdentifierÍSÍY¦lengthÂÂÔr\–¤type¥start£end¨operator¦prefix¨argument°UpdateExpressionÍ[Í^¢++ÂNªIdentifierÍ[Í\¡iO®BlockStatementÍ`ÍU“P³VariableDeclarationÍkÍ‘Q²VariableDeclaratorÍqÍ€NªIdentifierÍqÍr¡cR®CallExpressionÍuÍ€S°MemberExpressionÍuÍ}NªIdentifierÍuÍv¡sNªIdentifierÍwÍ}¦charAtÂÂ‘NªIdentifierÍ~Í¡iÂ¥constP³VariableDeclarationÍ‹Í‘Q²VariableDeclaratorÍ‘ÍNªIdentifierÍ‘Í“¢okZ±LogicalExpressionÍ–ÍZ±LogicalExpressionÍ–ÍZ±LogicalExpressionÍ–ÍúZ±LogicalExpressionÍ–ÍàZ±LogicalExpressionÍ–ÍÆZ±LogicalExpressionÍ—Í«Z°BinaryExpressionÍ—ÍŸNªIdentifierÍ—Í˜¡c¢>=T§LiteralÍœÍŸ¡A£'A'¢&&Z°BinaryExpressionÍ£Í«NªIdentifierÍ£Í¤¡c¢<=T§LiteralÍ¨Í«¡Z£'Z'¢||Z±LogicalExpressionÍ±ÍÅZ°BinaryExpressionÍ±Í¹NªIdentifierÍ±Í²¡c¢>=T§LiteralÍ¶Í¹¡a£'a'¢&&Z°BinaryExpressionÍ½ÍÅNªIdentifierÍ½Í¾¡c¢<=T§LiteralÍÂÍÅ¡z£'z'¢||Z±LogicalExpressionÍËÍßZ°BinaryExpressionÍËÍÓNªIdentifierÍËÍÌ¡c¢>=T§LiteralÍĞÍÓ¡0£'0'¢&&Z°BinaryExpressionÍ×ÍßNªIdentifierÍ×ÍØ¡c¢<=T§LiteralÍÜÍß¡9£'9'¢||Z°BinaryExpressionÍñÍúNªIdentifierÍñÍò¡c£===T§LiteralÍ÷Íú¡+£'+'¢||Z°BinaryExpressionÍşÍNªIdentifierÍşÍÿ¡c£===T§LiteralÍÍ¡/£'/'¢||Z°BinaryExpressionÍÍNªIdentifierÍÍ¡c£===T§LiteralÍÍ¡=£'='¥constÔr]–¤type¥start£end¤testªconsequent©alternate«IfStatementÍÍNNªIdentifierÍ#Í%¢okO®BlockStatementÍ'ÍN‘W³ExpressionStatementÍ6ÍCÔr^–¤type¥start£end¨operator¤left¥right´AssignmentExpressionÍ6ÍB¢+=NªIdentifierÍ6Í=§cleanedNªIdentifierÍAÍB¡cÀP³VariableDeclarationÍ™ÍÂ‘Q²VariableDeclaratorÍŸÍÁNªIdentifierÍŸÍ¤¥noPadR®CallExpressionÍ§ÍÁS°MemberExpressionÍ§Í¶NªIdentifierÍ§Í®§cleanedNªIdentifierÍ¯Í¶§replaceÂÂ’Ôr_–¤type¥start£end¥value£raw¥regex§LiteralÍ·Í¼’£=+$ ¥/=+$/Ôr`’§pattern¥flags£=+$ T§LiteralÍ¾ÍÀ ¢''Â¥const]«IfStatementÍÈÍZ°BinaryExpressionÍÌÍØNªIdentifierÍÌÍÑ¥noPad£===T§LiteralÍÖÍØ ¢''O®BlockStatementÍÚÍ‘X¯ReturnStatementÍåÍşY­NewExpressionÍìÍıNªIdentifierÍğÍúªUint8Array‘T§LiteralÍûÍü ¡0ÀP³VariableDeclarationÍIÍf‘Q²VariableDeclaratorÍOÍeNªIdentifierÍOÍR£remZ°BinaryExpressionÍUÍeS°MemberExpressionÍUÍaNªIdentifierÍUÍZ¥noPadNªIdentifierÍ[Ía¦lengthÂÂ¡%T§LiteralÍdÍe¡4¥constP³VariableDeclarationÍlÍ€‘Q²VariableDeclaratorÍpÍNªIdentifierÍpÍw§alignedNªIdentifierÍzÍ¥noPad£let]«IfStatementÍ†ÍòZ°BinaryExpressionÍŠÍ“NªIdentifierÍŠÍ£rem£!==T§LiteralÍ’Í“ ¡0O®BlockStatementÍ•Íò‘[¬ForStatementÍ ÍëP³VariableDeclarationÍ¥Í®‘Q²VariableDeclaratorÍ©Í®NªIdentifierÍ©Íª¡iT§LiteralÍ­Í® ¡0£letZ°BinaryExpressionÍ°Í»NªIdentifierÍ°Í±¡i¡<Z°BinaryExpressionÍ´Í»T§LiteralÍ´Íµ¡4¡-NªIdentifierÍ¸Í»£rem\°UpdateExpressionÍ½ÍÀ¢++ÂNªIdentifierÍ½Í¾¡iO®BlockStatementÍÂÍë‘W³ExpressionStatementÍÑÍà^´AssignmentExpressionÍÑÍß¢+=NªIdentifierÍÑÍØ§alignedT§LiteralÍÜÍß¡=£'='ÀX¯ReturnStatementÍøÍ*Y­NewExpressionÍÿÍ)NªIdentifierÍÍªUint8Array‘R®CallExpressionÍÍ(S°MemberExpressionÍÍNªIdentifierÍÍ¦helperNªIdentifierÍÍªdecodeSyncÂÂ‘NªIdentifierÍ Í'§alignedÂÀL¶ExportNamedDeclarationÍ/ÍŞM³FunctionDeclarationÍ6ÍŞNªIdentifierÍ?ÍJ«randomBytesÂÂÂ‘NªIdentifierÍKÍL¡nO®BlockStatementÍNÍŞ“P³VariableDeclarationÍUÍq‘Q²VariableDeclaratorÍ[ÍpNªIdentifierÍ[Í\¡bY­NewExpressionÍ_ÍpNªIdentifierÍcÍmªUint8Array‘NªIdentifierÍnÍo¡n¥const[¬ForStatementÍwÍÌP³VariableDeclarationÍ|Í…‘Q²VariableDeclaratorÍ€Í…NªIdentifierÍ€Í¡iT§LiteralÍ„Í… ¡0£letZ°BinaryExpressionÍ‡ÍŒNªIdentifierÍ‡Íˆ¡i¡<NªIdentifierÍ‹ÍŒ¡n\°UpdateExpressionÍÍ‘¢++ÂNªIdentifierÍÍ¡iO®BlockStatementÍ“ÍÌ‘W³ExpressionStatementÍÍÅ^´AssignmentExpressionÍÍÄ¡=S°MemberExpressionÍÍ¢NªIdentifierÍÍŸ¡bNªIdentifierÍ Í¡¡iÃÂR®CallExpressionÍ¥ÍÄS°MemberExpressionÍ¥Í¯NªIdentifierÍ¥Í©¤MathNªIdentifierÍªÍ¯¥floorÂÂ‘Z°BinaryExpressionÍ°ÍÃR®CallExpressionÍ°Í½S°MemberExpressionÍ°Í»NªIdentifierÍ°Í´¤MathNªIdentifierÍµÍ»¦randomÂÂÂ¡*T§LiteralÍÀÍÃÍ £256ÂX¯ReturnStatementÍÒÍÛNªIdentifierÍÙÍÚ¡bÀL¶ExportNamedDeclarationÍàÍ‰M³FunctionDeclarationÍçÍ‰NªIdentifierÍğÍõ¥toHexÂÂÂ‘NªIdentifierÍöÍú¤dataO®BlockStatementÍüÍ‰“P³VariableDeclarationÍÍ‘Q²VariableDeclaratorÍÍNªIdentifierÍÍ¡sT§LiteralÍÍ ¢''£let[¬ForStatementÍÍwP³VariableDeclarationÍÍ"‘Q²VariableDeclaratorÍÍ"NªIdentifierÍÍ¡iT§LiteralÍ!Í" ¡0£letZ°BinaryExpressionÍ$Í3NªIdentifierÍ$Í%¡i¡<S°MemberExpressionÍ(Í3NªIdentifierÍ(Í,¤dataNªIdentifierÍ-Í3¦lengthÂÂ\°UpdateExpressionÍ5Í8¢++ÂNªIdentifierÍ5Í6¡iO®BlockStatementÍ:Íw‘W³ExpressionStatementÍEÍp^´AssignmentExpressionÍEÍo¢+=NªIdentifierÍEÍF¡sR®CallExpressionÍJÍoS°MemberExpressionÍJÍgR®CallExpressionÍJÍ^S°MemberExpressionÍJÍZS°MemberExpressionÍJÍQNªIdentifierÍJÍN¤dataNªIdentifierÍOÍP¡iÃÂNªIdentifierÍRÍZ¨toStringÂÂ‘T§LiteralÍ[Í]¢16ÂNªIdentifierÍ_Íg¨padStartÂÂ’T§LiteralÍhÍi¡2T§LiteralÍkÍn¡0£'0'ÂX¯ReturnStatementÍ}Í†NªIdentifierÍ„Í…¡sÀL¶ExportNamedDeclarationÍ‹ÍgM³FunctionDeclarationÍ’ÍgNªIdentifierÍ›Í¢§fromHexÂÂÂ‘NªIdentifierÍ£Í¦£hexO®BlockStatementÍ¨Íg“P³VariableDeclarationÍ¯ÍÜ‘Q²VariableDeclaratorÍµÍÛNªIdentifierÍµÍº¥bytesY­NewExpressionÍ½ÍÛNªIdentifierÍÁÍËªUint8Array‘Z°BinaryExpressionÍÌÍÚS°MemberExpressionÍÌÍÖNªIdentifierÍÌÍÏ£hexNªIdentifierÍĞÍÖ¦lengthÂÂ¡/T§LiteralÍÙÍÚ¡2¥const[¬ForStatementÍâÍQP³VariableDeclarationÍçÍğ‘Q²VariableDeclaratorÍëÍğNªIdentifierÍëÍì¡iT§LiteralÍïÍğ ¡0£letZ°BinaryExpressionÍòÍ NªIdentifierÍòÍó¡i¡<S°MemberExpressionÍöÍ NªIdentifierÍöÍù£hexNªIdentifierÍúÍ ¦lengthÂÂ^´AssignmentExpressionÍÍ¢+=NªIdentifierÍÍ¡iT§LiteralÍÍ¡2O®BlockStatementÍ
-ÍQ‘W³ExpressionStatementÍÍJ^´AssignmentExpressionÍÍI¡=S°MemberExpressionÍÍ!NªIdentifierÍÍ¥bytesZ°BinaryExpressionÍÍ NªIdentifierÍÍ¡i¡/T§LiteralÍÍ ¡2ÃÂR®CallExpressionÍ$ÍINªIdentifierÍ$Í,¨parseInt’R®CallExpressionÍ-ÍDS°MemberExpressionÍ-Í:NªIdentifierÍ-Í0£hexNªIdentifierÍ1Í:©substringÂÂ’NªIdentifierÍ;Í<¡iZ°BinaryExpressionÍ>ÍCNªIdentifierÍ>Í?¡i¡+T§LiteralÍBÍC¡2ÂT§LiteralÍFÍH¢16ÂX¯ReturnStatementÍWÍdNªIdentifierÍ^Íc¥bytesÀL¶ExportNamedDeclarationÍiÍM³FunctionDeclarationÍpÍNªIdentifierÍyÍ‚©utf8BytesÂÂÂ‘NªIdentifierÍƒÍ†£strO®BlockStatementÍˆÍ“P³VariableDeclarationÍÍº‘Q²VariableDeclaratorÍ•Í¹NªIdentifierÍ•Í «textEncoderY­NewExpressionÍ£Í¹S°MemberExpressionÍ§Í·NªIdentifierÍ§Í«¤utilNªIdentifierÍ¬Í·«TextEncoderÂÂ¥constP³VariableDeclarationÍÀÍû‘Q²VariableDeclaratorÍÆÍúNªIdentifierÍÆÍÌ¦resultY­NewExpressionÍÏÍúNªIdentifierÍÓÍİªUint8Array‘R®CallExpressionÍŞÍùS°MemberExpressionÍŞÍôNªIdentifierÍŞÍé«textEncoderNªIdentifierÍêÍôªencodeIntoÂÂ‘NªIdentifierÍõÍø£strÂ¥constX¯ReturnStatementÍÍNªIdentifierÍÍ¦resultÀL¶ExportNamedDeclarationÍÍ¢M³FunctionDeclarationÍÍ¢NªIdentifierÍ$Í.ªutf8StringÂÂÂ‘NªIdentifierÍ/Í3¤dataO®BlockStatementÍ5Í¢’P³VariableDeclarationÍ<Íq‘Q²VariableDeclaratorÍBÍpNªIdentifierÍBÍM«textDecoderR®CallExpressionÍPÍpS°MemberExpressionÍPÍgS°MemberExpressionÍPÍ`NªIdentifierÍPÍT¤utilNªIdentifierÍUÍ`«TextDecoderÂÂNªIdentifierÍaÍg¦createÂÂ‘T§LiteralÍhÍo¥utf-8§'utf-8'Â¥constX¯ReturnStatementÍwÍŸR®CallExpressionÍ~ÍS°MemberExpressionÍ~Í˜NªIdentifierÍ~Í‰«textDecoderNªIdentifierÍŠÍ˜®decodeToStringÂÂ‘NªIdentifierÍ™Í¤dataÂÀL¶ExportNamedDeclarationÍÍ­M³FunctionDeclarationÍ
-Í­NªIdentifierÍÍ¨rc4CryptÂÂÂ“NªIdentifierÍÍ£keyNªIdentifierÍ!Í%¤dataÔra•¤type¥start£end¤left¥right±AssignmentPatternÍ'Í/NªIdentifierÍ'Í+¤dropT§LiteralÍ.Í/ ¡0O®BlockStatementÍ1Í­šP³VariableDeclarationÍ8ÍQ‘Q²VariableDeclaratorÍ>ÍPNªIdentifierÍ>Í?¡sY­NewExpressionÍBÍPNªIdentifierÍFÍK¥Array‘T§LiteralÍLÍOÍ £256¥const[¬ForStatementÍWÍP³VariableDeclarationÍ\Íe‘Q²VariableDeclaratorÍ`ÍeNªIdentifierÍ`Ía¡iT§LiteralÍdÍe ¡0£letZ°BinaryExpressionÍgÍnNªIdentifierÍgÍh¡i¡<T§LiteralÍkÍnÍ £256\°UpdateExpressionÍpÍs¢++ÂNªIdentifierÍpÍq¡iO®BlockStatementÍuÍ‘W³ExpressionStatementÍ€Í‰^´AssignmentExpressionÍ€Íˆ¡=S°MemberExpressionÍ€Í„NªIdentifierÍ€Í¡sNªIdentifierÍ‚Íƒ¡iÃÂNªIdentifierÍ‡Íˆ¡iP³VariableDeclarationÍ–Í ‘Q²VariableDeclaratorÍšÍŸNªIdentifierÍšÍ›¡jT§LiteralÍÍŸ ¡0£let[¬ForStatementÍ¦ÍHP³VariableDeclarationÍ«Í´‘Q²VariableDeclaratorÍ¯Í´NªIdentifierÍ¯Í°¡iT§LiteralÍ³Í´ ¡0£letZ°BinaryExpressionÍ¶Í½NªIdentifierÍ¶Í·¡i¡<T§LiteralÍºÍ½Í £256\°UpdateExpressionÍ¿ÍÂ¢++ÂNªIdentifierÍ¿ÍÀ¡iO®BlockStatementÍÄÍH”W³ExpressionStatementÍÏÍû^´AssignmentExpressionÍÏÍú¡=NªIdentifierÍÏÍĞ¡jZ°BinaryExpressionÍÓÍúZ°BinaryExpressionÍÔÍòZ°BinaryExpressionÍÔÍÜNªIdentifierÍÔÍÕ¡j¡+S°MemberExpressionÍØÍÜNªIdentifierÍØÍÙ¡sNªIdentifierÍÚÍÛ¡iÃÂ¡+S°MemberExpressionÍßÍòNªIdentifierÍßÍâ£keyZ°BinaryExpressionÍãÍñNªIdentifierÍãÍä¡i¡%S°MemberExpressionÍçÍñNªIdentifierÍçÍê£keyNªIdentifierÍëÍñ¦lengthÂÂÃÂ¡&T§LiteralÍöÍúÌÿ¤0xffP³VariableDeclarationÍÍ‘Q²VariableDeclaratorÍÍNªIdentifierÍÍ£tmpS°MemberExpressionÍÍNªIdentifierÍÍ¡sNªIdentifierÍÍ¡iÃÂ¥constW³ExpressionStatementÍ Í,^´AssignmentExpressionÍ Í+¡=S°MemberExpressionÍ Í$NªIdentifierÍ Í!¡sNªIdentifierÍ"Í#¡iÃÂS°MemberExpressionÍ'Í+NªIdentifierÍ'Í(¡sNªIdentifierÍ)Í*¡jÃÂW³ExpressionStatementÍ6ÍA^´AssignmentExpressionÍ6Í@¡=S°MemberExpressionÍ6Í:NªIdentifierÍ6Í7¡sNªIdentifierÍ8Í9¡jÃÂNªIdentifierÍ=Í@£tmpP³VariableDeclarationÍzÍ„‘Q²VariableDeclaratorÍ~ÍƒNªIdentifierÍ~Í¡aT§LiteralÍ‚Íƒ ¡0£letP³VariableDeclarationÍŠÍ”‘Q²VariableDeclaratorÍÍ“NªIdentifierÍÍ¡bT§LiteralÍ’Í“ ¡0£let[¬ForStatementÍšÍ@P³VariableDeclarationÍŸÍ¨‘Q²VariableDeclaratorÍ£Í¨NªIdentifierÍ£Í¤¡kT§LiteralÍ§Í¨ ¡0£letZ°BinaryExpressionÍªÍ²NªIdentifierÍªÍ«¡k¡<NªIdentifierÍ®Í²¤drop\°UpdateExpressionÍ´Í·¢++ÂNªIdentifierÍ´Íµ¡kO®BlockStatementÍ¹Í@•W³ExpressionStatementÍÄÍ×^´AssignmentExpressionÍÄÍÖ¡=NªIdentifierÍÄÍÅ¡aZ°BinaryExpressionÍÈÍÖZ°BinaryExpressionÍÉÍÎNªIdentifierÍÉÍÊ¡a¡+T§LiteralÍÍÍÎ¡1¡&T§LiteralÍÒÍÖÌÿ¤0xffW³ExpressionStatementÍáÍ÷^´AssignmentExpressionÍáÍö¡=NªIdentifierÍáÍâ¡bZ°BinaryExpressionÍåÍöZ°BinaryExpressionÍæÍîNªIdentifierÍæÍç¡b¡+S°MemberExpressionÍêÍîNªIdentifierÍêÍë¡sNªIdentifierÍìÍí¡aÃÂ¡&T§LiteralÍòÍöÌÿ¤0xffP³VariableDeclarationÍÍ‘Q²VariableDeclaratorÍÍNªIdentifierÍÍ¡tS°MemberExpressionÍÍNªIdentifierÍÍ¡sNªIdentifierÍÍ¡aÃÂ¥constW³ExpressionStatementÍÍ&^´AssignmentExpressionÍÍ%¡=S°MemberExpressionÍÍNªIdentifierÍÍ¡sNªIdentifierÍÍ¡aÃÂS°MemberExpressionÍ!Í%NªIdentifierÍ!Í"¡sNªIdentifierÍ#Í$¡bÃÂW³ExpressionStatementÍ0Í9^´AssignmentExpressionÍ0Í8¡=S°MemberExpressionÍ0Í4NªIdentifierÍ0Í1¡sNªIdentifierÍ2Í3¡bÃÂNªIdentifierÍ7Í8¡tP³VariableDeclarationÍcÍ‹‘Q²VariableDeclaratorÍiÍŠNªIdentifierÍiÍl£outY­NewExpressionÍoÍŠNªIdentifierÍsÍ}ªUint8Array‘S°MemberExpressionÍ~Í‰NªIdentifierÍ~Í‚¤dataNªIdentifierÍƒÍ‰¦lengthÂÂ¥const[¬ForStatementÍ‘Í™P³VariableDeclarationÍ–ÍŸ‘Q²VariableDeclaratorÍšÍŸNªIdentifierÍšÍ›¡kT§LiteralÍÍŸ ¡0£letZ°BinaryExpressionÍ¡Í°NªIdentifierÍ¡Í¢¡k¡<S°MemberExpressionÍ¥Í°NªIdentifierÍ¥Í©¤dataNªIdentifierÍªÍ°¦lengthÂÂ\°UpdateExpressionÍ²Íµ¢++ÂNªIdentifierÍ²Í³¡kO®BlockStatementÍ·Í™—W³ExpressionStatementÍÂÍÕ^´AssignmentExpressionÍÂÍÔ¡=NªIdentifierÍÂÍÃ¡aZ°BinaryExpressionÍÆÍÔZ°BinaryExpressionÍÇÍÌNªIdentifierÍÇÍÈ¡a¡+T§LiteralÍËÍÌ¡1¡&T§LiteralÍĞÍÔÌÿ¤0xffW³ExpressionStatementÍßÍõ^´AssignmentExpressionÍßÍô¡=NªIdentifierÍßÍà¡bZ°BinaryExpressionÍãÍôZ°BinaryExpressionÍäÍìNªIdentifierÍäÍå¡b¡+S°MemberExpressionÍèÍìNªIdentifierÍèÍé¡sNªIdentifierÍêÍë¡aÃÂ¡&T§LiteralÍğÍôÌÿ¤0xffP³VariableDeclarationÍÿÍ‘Q²VariableDeclaratorÍÍNªIdentifierÍÍ¡tS°MemberExpressionÍ	ÍNªIdentifierÍ	Í
-¡sNªIdentifierÍÍ¡aÃÂ¥constW³ExpressionStatementÍÍ$^´AssignmentExpressionÍÍ#¡=S°MemberExpressionÍÍNªIdentifierÍÍ¡sNªIdentifierÍÍ¡aÃÂS°MemberExpressionÍÍ#NªIdentifierÍÍ ¡sNªIdentifierÍ!Í"¡bÃÂW³ExpressionStatementÍ.Í7^´AssignmentExpressionÍ.Í6¡=S°MemberExpressionÍ.Í2NªIdentifierÍ.Í/¡sNªIdentifierÍ0Í1¡bÃÂNªIdentifierÍ5Í6¡tP³VariableDeclarationÍAÍk‘Q²VariableDeclaratorÍGÍjNªIdentifierÍGÍP©keystreamS°MemberExpressionÍSÍjNªIdentifierÍSÍT¡sZ°BinaryExpressionÍUÍiZ°BinaryExpressionÍVÍaS°MemberExpressionÍVÍZNªIdentifierÍVÍW¡sNªIdentifierÍXÍY¡aÃÂ¡+S°MemberExpressionÍ]ÍaNªIdentifierÍ]Í^¡sNªIdentifierÍ_Í`¡bÃÂ¡&T§LiteralÍeÍiÌÿ¤0xffÃÂ¥constW³ExpressionStatementÍuÍ’^´AssignmentExpressionÍuÍ‘¡=S°MemberExpressionÍuÍ{NªIdentifierÍuÍx£outNªIdentifierÍyÍz¡kÃÂZ°BinaryExpressionÍ~Í‘S°MemberExpressionÍ~Í…NªIdentifierÍ~Í‚¤dataNªIdentifierÍƒÍ„¡kÃÂ¡^NªIdentifierÍˆÍ‘©keystreamX¯ReturnStatementÍŸÍªNªIdentifierÍ¦Í©£outÀL¶ExportNamedDeclarationÍÆÍ˜M³FunctionDeclarationÍÍÍ˜NªIdentifierÍÜÍå©sha1BytesÂÂÃ‘NªIdentifierÍæÍê¤dataO®BlockStatementÍìÍ˜”P³VariableDeclarationÍóÍ‘Q²VariableDeclaratorÍùÍNªIdentifierÍùÍû¢mdR®CallExpressionÍşÍS°MemberExpressionÍşÍNªIdentifierÍşÍ¯cryptoFrameworkNªIdentifierÍÍ¨createMdÂÂ‘T§LiteralÍÍ¤SHA1¦'SHA1'Â¥constW³ExpressionStatementÍ%ÍEX¯AwaitExpressionÍ%ÍDR®CallExpressionÍ+ÍDS°MemberExpressionÍ+Í4NªIdentifierÍ+Í-¢mdNªIdentifierÍ.Í4¦updateÂÂ‘U°ObjectExpressionÍ5ÍC‘V¨PropertyÍ7ÍAÂÂÂNªIdentifierÍ7Í;¤dataNªIdentifierÍ=ÍA¤data¤initÂP³VariableDeclarationÍKÍl‘Q²VariableDeclaratorÍQÍkNªIdentifierÍQÍW¦digestX¯AwaitExpressionÍZÍkR®CallExpressionÍ`ÍkS°MemberExpressionÍ`ÍiNªIdentifierÍ`Íb¢mdNªIdentifierÍcÍi¦digestÂÂÂ¥constX¯ReturnStatementÍrÍ•Y­NewExpressionÍyÍ”NªIdentifierÍ}Í‡ªUint8Array‘S°MemberExpressionÍˆÍ“NªIdentifierÍˆÍ¦digestNªIdentifierÍÍ“¤dataÂÂÀL¶ExportNamedDeclarationÍ–Í¶M³FunctionDeclarationÍÍ¶NªIdentifierÍ¬Í¹­aesGcmEncryptÂÂÃ“NªIdentifierÍºÍ¿¥plainNªIdentifierÍÁÍÄ£keyNªIdentifierÍÆÍÈ¢ivO®BlockStatementÍÊÍ¶œP³VariableDeclarationÍÑÍ‘Q²VariableDeclaratorÍ×ÍNªIdentifierÍ×Íİ¦cipherR®CallExpressionÍàÍS°MemberExpressionÍàÍüNªIdentifierÍàÍï¯cryptoFrameworkNªIdentifierÍğÍü¬createCipherÂÂ‘T§LiteralÍıÍ´AES256|GCM|NoPadding¶'AES256|GCM|NoPadding'Â¥constP³VariableDeclarationÍÍC‘Q²VariableDeclaratorÍ!ÍBNªIdentifierÍ!Í'¦symKeyX¯AwaitExpressionÍ*ÍBR®CallExpressionÍ0ÍBNªIdentifierÍ0Í=­makeSymKey256‘NªIdentifierÍ>ÍA£keyÂ¥constP³VariableDeclarationÍIÍû‘Q²VariableDeclaratorÍOÍúNªIdentifierÍOÍX©gcmParamsU°ObjectExpressionÍ[Íú”V¨PropertyÍfÍ~ÂÂÂNªIdentifierÍfÍm§algNameT§LiteralÍoÍ~­GcmParamsSpec¯'GcmParamsSpec'¤initV¨PropertyÍ‰Í™ÂÂÂNªIdentifierÍ‰Í‹¢ivU°ObjectExpressionÍÍ™‘V¨PropertyÍÍ—ÂÂÂNªIdentifierÍÍ“¤dataNªIdentifierÍ•Í—¢iv¤init¤initV¨PropertyÍ¤ÍÄÂÂÂNªIdentifierÍ¤Í§£aadU°ObjectExpressionÍ©ÍÄ‘V¨PropertyÍ«ÍÂÂÂÂNªIdentifierÍ«Í¯¤dataY­NewExpressionÍ±ÍÂNªIdentifierÍµÍ¿ªUint8Array‘T§LiteralÍÀÍÁ ¡0¤init¤initV¨PropertyÍÏÍóÂÂÂNªIdentifierÍÏÍÖ§authTagU°ObjectExpressionÍØÍó‘V¨PropertyÍÚÍñÂÂÂNªIdentifierÍÚÍŞ¤dataY­NewExpressionÍàÍñNªIdentifierÍäÍîªUint8Array‘T§LiteralÍïÍğ ¡0¤init¤init¥constW³ExpressionStatementÍÍOX¯AwaitExpressionÍÍNR®CallExpressionÍÍNS°MemberExpressionÍÍNªIdentifierÍÍ¦cipherNªIdentifierÍÍ¤initÂÂ“S°MemberExpressionÍÍ:S°MemberExpressionÍÍ-NªIdentifierÍÍ"¯cryptoFrameworkNªIdentifierÍ#Í-ªCryptoModeÂÂNªIdentifierÍ.Í:¬ENCRYPT_MODEÂÂNªIdentifierÍ<ÍB¦symKeyNªIdentifierÍDÍM©gcmParamsÂP³VariableDeclarationÍUÍ‘Q²VariableDeclaratorÍ[ÍŒNªIdentifierÍ[ÍeªcipherTextX¯AwaitExpressionÍhÍŒR®CallExpressionÍnÍŒS°MemberExpressionÍnÍ{NªIdentifierÍnÍt¦cipherNªIdentifierÍuÍ{¦updateÂÂ‘U°ObjectExpressionÍ|Í‹‘V¨PropertyÍ~Í‰ÂÂÂNªIdentifierÍ~Í‚¤dataNªIdentifierÍ„Í‰¥plain¤initÂ¥constP³VariableDeclarationÍ“Íº‘Q²VariableDeclaratorÍ™Í¹NªIdentifierÍ™Íœ£tagX¯AwaitExpressionÍŸÍ¹R®CallExpressionÍ¥Í¹S°MemberExpressionÍ¥Í³NªIdentifierÍ¥Í«¦cipherNªIdentifierÍ¬Í³§doFinalÂÂ‘T§LiteralÍ´Í¸À¤nullÂ¥constP³VariableDeclarationÍÀÍë‘Q²VariableDeclaratorÍÆÍêNªIdentifierÍÆÍÈ¢ctY­NewExpressionÍËÍêNªIdentifierÍÏÍÙªUint8Array‘S°MemberExpressionÍÚÍéNªIdentifierÍÚÍäªcipherTextNªIdentifierÍåÍé¤dataÂÂ¥constP³VariableDeclarationÍñÍ8‘Q²VariableDeclaratorÍ÷Í7NªIdentifierÍ÷Íù¢tg]µConditionalExpressionÍüÍ7Z°BinaryExpressionÍüÍNªIdentifierÍüÍÿ£tag£===T§LiteralÍÍÀ¤nullY­NewExpressionÍÍNªIdentifierÍÍªUint8Array‘T§LiteralÍÍ ¡0Y­NewExpressionÍÍ7NªIdentifierÍ#Í-ªUint8Array‘S°MemberExpressionÍ.Í6NªIdentifierÍ.Í1£tagNªIdentifierÍ2Í6¤dataÂÂ¥constP³VariableDeclarationÍ>Íp‘Q²VariableDeclaratorÍDÍoNªIdentifierÍDÍG£outY­NewExpressionÍJÍoNªIdentifierÍNÍXªUint8Array‘Z°BinaryExpressionÍYÍnS°MemberExpressionÍYÍbNªIdentifierÍYÍ[¢ctNªIdentifierÍ\Íb¦lengthÂÂ¡+S°MemberExpressionÍeÍnNªIdentifierÍeÍg¢tgNªIdentifierÍhÍn¦lengthÂÂ¥constW³ExpressionStatementÍvÍ…R®CallExpressionÍvÍ„S°MemberExpressionÍvÍ}NªIdentifierÍvÍy£outNªIdentifierÍzÍ}£setÂÂ’NªIdentifierÍ~Í€¢ctT§LiteralÍ‚Íƒ ¡0ÂW³ExpressionStatementÍ‹Í¢R®CallExpressionÍ‹Í¡S°MemberExpressionÍ‹Í’NªIdentifierÍ‹Í£outNªIdentifierÍÍ’£setÂÂ’NªIdentifierÍ“Í•¢tgS°MemberExpressionÍ—Í NªIdentifierÍ—Í™¢ctNªIdentifierÍšÍ ¦lengthÂÂÂX¯ReturnStatementÍ¨Í³NªIdentifierÍ¯Í²£outÀL¶ExportNamedDeclarationÍøÍçM³FunctionDeclarationÍÿÍçNªIdentifierÍÍ­aesGcmDecryptÂÂÃ“NªIdentifierÍÍ)­cipherWithTagNªIdentifierÍ+Í.£keyNªIdentifierÍ0Í2¢ivO®BlockStatementÍ4ÍçšP³VariableDeclarationÍ;ÍM‘Q²VariableDeclaratorÍAÍLNªIdentifierÍAÍG¦tagLenT§LiteralÍJÍL¢16¥constP³VariableDeclarationÍSÍŸ‘Q²VariableDeclaratorÍYÍNªIdentifierÍYÍcªcipherTextR®CallExpressionÍfÍS°MemberExpressionÍfÍ|NªIdentifierÍfÍs­cipherWithTagNªIdentifierÍtÍ|¨subarrayÂÂ’T§LiteralÍ}Í~ ¡0Z°BinaryExpressionÍ€ÍS°MemberExpressionÍ€Í”NªIdentifierÍ€Í­cipherWithTagNªIdentifierÍÍ”¦lengthÂÂ¡-NªIdentifierÍ—Í¦tagLenÂ¥constP³VariableDeclarationÍ¥Íç‘Q²VariableDeclaratorÍ«ÍæNªIdentifierÍ«Í®£tagR®CallExpressionÍ±ÍæS°MemberExpressionÍ±ÍÇNªIdentifierÍ±Í¾­cipherWithTagNªIdentifierÍ¿ÍÇ¨subarrayÂÂ‘Z°BinaryExpressionÍÈÍåS°MemberExpressionÍÈÍÜNªIdentifierÍÈÍÕ­cipherWithTagNªIdentifierÍÖÍÜ¦lengthÂÂ¡-NªIdentifierÍßÍå¦tagLenÂ¥constP³VariableDeclarationÍíÍ1‘Q²VariableDeclaratorÍóÍ0NªIdentifierÍóÍù¦cipherR®CallExpressionÍüÍ0S°MemberExpressionÍüÍNªIdentifierÍüÍ¯cryptoFrameworkNªIdentifierÍÍ¬createCipherÂÂ‘T§LiteralÍÍ/´AES256|GCM|NoPadding¶'AES256|GCM|NoPadding'Â¥constP³VariableDeclarationÍ7Í_‘Q²VariableDeclaratorÍ=Í^NªIdentifierÍ=ÍC¦symKeyX¯AwaitExpressionÍFÍ^R®CallExpressionÍLÍ^NªIdentifierÍLÍY­makeSymKey256‘NªIdentifierÍZÍ]£keyÂ¥constP³VariableDeclarationÍeÍ	‘Q²VariableDeclaratorÍkÍNªIdentifierÍkÍt©gcmParamsU°ObjectExpressionÍwÍ”V¨PropertyÍ‚ÍšÂÂÂNªIdentifierÍ‚Í‰§algNameT§LiteralÍ‹Íš­GcmParamsSpec¯'GcmParamsSpec'¤initV¨PropertyÍ¥ÍµÂÂÂNªIdentifierÍ¥Í§¢ivU°ObjectExpressionÍ©Íµ‘V¨PropertyÍ«Í³ÂÂÂNªIdentifierÍ«Í¯¤dataNªIdentifierÍ±Í³¢iv¤init¤initV¨PropertyÍÀÍàÂÂÂNªIdentifierÍÀÍÃ£aadU°ObjectExpressionÍÅÍà‘V¨PropertyÍÇÍŞÂÂÂNªIdentifierÍÇÍË¤dataY­NewExpressionÍÍÍŞNªIdentifierÍÑÍÛªUint8Array‘T§LiteralÍÜÍİ ¡0¤init¤initV¨PropertyÍëÍÂÂÂNªIdentifierÍëÍò§authTagU°ObjectExpressionÍôÍ‘V¨PropertyÍöÍÿÂÂÂNªIdentifierÍöÍú¤dataNªIdentifierÍüÍÿ£tag¤init¤init¥constW³ExpressionStatementÍÍ]X¯AwaitExpressionÍÍ\R®CallExpressionÍÍ\S°MemberExpressionÍÍ NªIdentifierÍÍ¦cipherNªIdentifierÍÍ ¤initÂÂ“S°MemberExpressionÍ!ÍHS°MemberExpressionÍ!Í;NªIdentifierÍ!Í0¯cryptoFrameworkNªIdentifierÍ1Í;ªCryptoModeÂÂNªIdentifierÍ<ÍH¬DECRYPT_MODEÂÂNªIdentifierÍJÍP¦symKeyNªIdentifierÍRÍ[©gcmParamsÂP³VariableDeclarationÍcÍ›‘Q²VariableDeclaratorÍiÍšNªIdentifierÍiÍn¥plainX¯AwaitExpressionÍqÍšR®CallExpressionÍwÍšS°MemberExpressionÍwÍ„NªIdentifierÍwÍ}¦cipherNªIdentifierÍ~Í„¦updateÂÂ‘U°ObjectExpressionÍ…Í™‘V¨PropertyÍ‡Í—ÂÂÂNªIdentifierÍ‡Í‹¤dataNªIdentifierÍÍ—ªcipherText¤initÂ¥constW³ExpressionStatementÍ¡Í¼X¯AwaitExpressionÍ¡Í»R®CallExpressionÍ§Í»S°MemberExpressionÍ§ÍµNªIdentifierÍ§Í­¦cipherNªIdentifierÍ®Íµ§doFinalÂÂ‘T§LiteralÍ¶ÍºÀ¤nullÂX¯ReturnStatementÍÂÍäY­NewExpressionÍÉÍãNªIdentifierÍÍÍ×ªUint8Array‘S°MemberExpressionÍØÍâNªIdentifierÍØÍİ¥plainNªIdentifierÍŞÍâ¤dataÂÂÀ’Ôrb•¤type¥start£endªspecifiers¦source±ImportDeclaration =‘Ôrc”¤type¥start£end¥local¶ImportDefaultSpecifierNªIdentifier¯cryptoFrameworkT§Literal<¾@ohos.security.cryptoFrameworkÙ "@ohos.security.cryptoFramework"b±ImportDeclaration?Ì]‘c¶ImportDefaultSpecifierÌFÌJNªIdentifierÌFÌJ¤utilT§LiteralÌPÌ\ª@ohos.util¬"@ohos.util"

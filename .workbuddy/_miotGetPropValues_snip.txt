@@ -1,0 +1,61 @@
+﻿ * 返回 key=`${siid}.${piid}` → 值 的映射。
+ */
+export async function miotGetPropValues(did: string, siids: number[],
+  piids: number[]): Promise<Record<string, string | number | boolean>> {
+  const params: Object[] = [];
+  for (let i = 0; i < siids.length; i++) {
+    const prop: Record<string, Object> = { 'did': did, 'siid': siids[i], 'piid': piids[i] };
+    params.push(prop);
+  }
+  const payload: Record<string, Object> = { 'params': params };
+  const respData = await signedPost('/miotspec/prop/get', JSON.stringify(payload), 'cn');
+  const result: Record<string, string | number | boolean> = {};
+  const rawResult = respData['result'];
+  if (rawResult instanceof Array) {
+    const arr = rawResult as Object[];
+    for (let i = 0; i < arr.length; i++) {
+      const r = arr[i] as Record<string, Object>;
+      const siid = Number(r['siid'] ?? 0);
+      const piid = Number(r['piid'] ?? 0);
+      const val = r['value'];
+      const key = `${siid}.${piid}`;
+      if (val === true) {
+        result[key] = true;
+      } else if (val === false) {
+        result[key] = false;
+      } else if (val !== undefined && val !== null) {
+        // 区分 number / string：JSON.parse 后数值会转成 number（如温度 24.6、湿度 61）
+        const s = String(val);
+        const num = Number(s);
+        if (!Number.isNaN(num) && s !== '' && String(num) === s) {
+          result[key] = num;
+        } else {
+          result[key] = s;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/** 拉取真实家庭+房间结构（/v2/homeroom/gethome_merged，与 hass-xiaomi-miot 一致） */
+export async function getHomeList(country: string = 'cn'): Promise<CloudHome[]> {
+  const respData = await signedPost('/v2/homeroom/gethome_merged',
+    '{"fg":true,"fetch_share":true,"fetch_share_dev":true,"fetch_cariot":true,"limit":300,"app_ver":7,"plat_form":0}', country);
+  const gcode = Number(respData['code'] ?? -1);
+  Logger.info(TAG, `getHomeList gethome_merged code=${gcode}`);
+  if (gcode !== 0) {
+    Logger.error(TAG, `gethome_merged failed, body=${JSON.stringify(respData).substring(0, 500)}`);
+    return [];
+  }
+  const result = respData['result'] as Record<string, Object>;
+  const rawHomes = result['homelist'];
+  const list: Object[] = (rawHomes instanceof Array) ? rawHomes as Object[] : [];
+  const homes: CloudHome[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const h = list[i] as Record<string, Object>;
+    const rooms: CloudRoom[] = [];
+    const rawRooms = h['roomlist'];
+    const rl: Object[] = (rawRooms instanceof Array) ? rawRooms as Object[] : [];
+    for (let j = 0; j < rl.length; j++) {
+      const r = rl[j] as Record<string, Object>;

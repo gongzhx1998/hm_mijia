@@ -21,6 +21,8 @@ import * as MiCloud from "@normalized:N&&&entry/src/main/ets/service/MiCloud&";
 import { AppConfig, Logger, setStatusBar } from "@normalized:N&&&entry/src/main/ets/common/AppConfig&";
 import type { Room, Device, DeviceCommand, Home } from '../model/Models';
 import { ProfileTab } from "@normalized:N&&&entry/src/main/ets/pages/Profile&";
+import type common from "@ohos:app.ability.common";
+import { prefetchAll } from "@normalized:N&&&entry/src/main/ets/service/PluginStore&";
 const TAG = 'Home';
 class HomePage extends ViewPU {
     constructor(parent, params, __localStorage, elmtId = -1, paramsLambda = undefined, extraInfo) {
@@ -226,6 +228,7 @@ class HomePage extends ViewPU {
             // 批量读取可开关设备的电源状态，让开关按钮显示真实状态
             await ApiService.readPowerStates(this.devices);
             Logger.info(TAG, `loadData done: homes=${this.homes.length} rooms=${this.rooms.length} devices=${this.devices.length}`);
+            this.startPluginPrefetch();
         }
         catch (e) {
             Logger.error(TAG, `loadData failed: ${e}`);
@@ -234,6 +237,23 @@ class HomePage extends ViewPU {
         finally {
             this.loading = false;
         }
+    }
+    /**
+     * 后台预取所有设备的米家插件：先从云端刷新全量设备列表（缓存可能缺新设备），
+     * 再交给 PluginStore 去重/批量查询/限并发下载。不阻塞首页渲染。
+     */
+    private startPluginPrefetch(): void {
+        const ctx: common.Context = getContext(this) as common.UIAbilityContext;
+        const fallback: string[] = this.devices.map((d: Device) => d.model);
+        setTimeout(() => {
+            ApiService.reloadDevicesForHome('').then((all: Device[]) => {
+                const models: string[] = all.length > 0 ? all.map((d: Device) => d.model) : fallback;
+                prefetchAll(ctx, models);
+            }).catch((e: Error) => {
+                Logger.error(TAG, `prefetch device list failed: ${e?.message ?? e}`);
+                prefetchAll(ctx, fallback);
+            });
+        }, 1500);
     }
     /** 切换家庭：更新 homeId/homeName，重新拉取该家庭的房间和设备 */
     async switchHome(home: Home): Promise<void> {
@@ -407,7 +427,7 @@ class HomePage extends ViewPU {
                                 onLoggedOut: () => {
                                     router.replaceUrl({ url: 'pages/Login' });
                                 }
-                            }, undefined, elmtId, () => { }, { page: "entry/src/main/ets/pages/Home.ets", line: 244, col: 9 });
+                            }, undefined, elmtId, () => { }, { page: "entry/src/main/ets/pages/Home.ets", line: 265, col: 9 });
                             ViewPU.create(componentCall);
                             let paramsLambda = () => {
                                 return {
@@ -511,7 +531,7 @@ class HomePage extends ViewPU {
         }, Text);
         Text.pop();
         this.observeComponentCreation2((elmtId, isInitialRender) => {
-            Image.create({ "id": 16777227, "type": 20000, params: [], "bundleName": "com.mijia.hm", "moduleName": "entry" });
+            Image.create({ "id": 16777225, "type": 20000, params: [], "bundleName": "com.mijia.hm", "moduleName": "entry" });
             Image.width(14);
             Image.height(14);
             Image.fillColor('#FFFFFF');
@@ -998,8 +1018,23 @@ class HomePage extends ViewPU {
             Stack.backgroundColor('#D9222B33');
             Stack.borderRadius(16);
             Stack.onClick(() => {
+                // 点设备 → 打开该设备自己的米家 RN 插件（按型号下载/缓存）；无插件时插件页自动回退原生控制页
+                const params: Record<string, string> = {
+                    'did': device.did,
+                    'model': device.model,
+                    'name': device.name,
+                    'online': device.online ? '1' : '0'
+                };
+                router.pushUrl({ url: 'pages/PluginHost', params: params });
+            });
+            globalThis.Gesture.create(GesturePriority.Low);
+            LongPressGesture.create();
+            LongPressGesture.onAction(() => {
+                // 长按：直接进原生控制页
                 router.pushUrl({ url: 'pages/DeviceControl', params: { did: device.did } });
             });
+            LongPressGesture.pop();
+            globalThis.Gesture.pop();
         }, Stack);
         this.observeComponentCreation2((elmtId, isInitialRender) => {
             Column.create();
@@ -1084,7 +1119,7 @@ class HomePage extends ViewPU {
                         });
                     }, Row);
                     this.observeComponentCreation2((elmtId, isInitialRender) => {
-                        Image.create({ "id": 16777230, "type": 20000, params: [], "bundleName": "com.mijia.hm", "moduleName": "entry" });
+                        Image.create({ "id": 16777228, "type": 20000, params: [], "bundleName": "com.mijia.hm", "moduleName": "entry" });
                         Image.width(17);
                         Image.height(17);
                         Image.fillColor(this.devicePower(device) ? '#FFD54F' : '#B8CBD9');
@@ -1112,7 +1147,7 @@ class HomePage extends ViewPU {
             if (index === 0) {
                 this.ifElseBranchUpdateFunction(0, () => {
                     this.observeComponentCreation2((elmtId, isInitialRender) => {
-                        Image.create({ "id": 16777228, "type": 20000, params: [], "bundleName": "com.mijia.hm", "moduleName": "entry" });
+                        Image.create({ "id": 16777226, "type": 20000, params: [], "bundleName": "com.mijia.hm", "moduleName": "entry" });
                         Image.width(22);
                         Image.height(22);
                         Image.fillColor(this.currentTab === index ? '#4A90D9' : '#999999');
@@ -1122,7 +1157,7 @@ class HomePage extends ViewPU {
             else {
                 this.ifElseBranchUpdateFunction(1, () => {
                     this.observeComponentCreation2((elmtId, isInitialRender) => {
-                        Image.create({ "id": 16777229, "type": 20000, params: [], "bundleName": "com.mijia.hm", "moduleName": "entry" });
+                        Image.create({ "id": 16777227, "type": 20000, params: [], "bundleName": "com.mijia.hm", "moduleName": "entry" });
                         Image.width(22);
                         Image.height(22);
                         Image.fillColor(this.currentTab === index ? '#4A90D9' : '#999999');
@@ -1142,6 +1177,8 @@ class HomePage extends ViewPU {
     }
     rerender() {
         this.updateDirtyElements();
+    }
+    public __resetStateVarsOnReuse__Internal(params: Object): void {
     }
     static getEntryName(): string {
         return "HomePage";

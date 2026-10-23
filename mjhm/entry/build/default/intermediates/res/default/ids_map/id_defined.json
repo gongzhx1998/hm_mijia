@@ -37,27 +37,27 @@
 			"id":	"0x01000008"
 		}, {
 			"type":	"media",
-			"name":	"icon",
-			"id":	"0x01000009"
-		}, {
-			"type":	"profile",
-			"name":	"main_pages",
-			"id":	"0x0100000A"
-		}, {
-			"type":	"media",
 			"name":	"ic_chevron_down",
-			"id":	"0x0100000B"
+			"id":	"0x01000009"
 		}, {
 			"type":	"media",
 			"name":	"ic_home",
-			"id":	"0x0100000C"
+			"id":	"0x0100000A"
 		}, {
 			"type":	"media",
 			"name":	"ic_person",
-			"id":	"0x0100000D"
+			"id":	"0x0100000B"
 		}, {
 			"type":	"media",
 			"name":	"ic_power",
+			"id":	"0x0100000C"
+		}, {
+			"type":	"media",
+			"name":	"icon",
+			"id":	"0x0100000D"
+		}, {
+			"type":	"profile",
+			"name":	"main_pages",
 			"id":	"0x0100000E"
 		}]
 }

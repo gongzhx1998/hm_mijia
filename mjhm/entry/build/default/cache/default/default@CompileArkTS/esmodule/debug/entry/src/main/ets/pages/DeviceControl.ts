@@ -883,7 +883,7 @@ class DeviceControl extends ViewPU {
                     Column.pop();
                 });
             }
-            else /** 状态卡内的大数字块 */ {
+            else {
                 this.ifElseBranchUpdateFunction(2, () => {
                 });
             }
@@ -1563,6 +1563,37 @@ class DeviceControl extends ViewPU {
                     // 顶部卡：大图标 + 设备名 + 在线状态
                     Column.pop();
                     this.observeComponentCreation2((elmtId, isInitialRender) => {
+                        Row.create();
+                        Row.width('100%');
+                        Row.padding(14);
+                        Row.backgroundColor('#FFFFFF');
+                        Row.borderRadius(12);
+                        Row.margin({ bottom: 12 });
+                        Row.onClick(() => {
+                            if (this.device !== null) {
+                                const params: Record<string, string> = {
+                                    'did': this.device.did,
+                                    'model': this.device.model,
+                                    'name': this.device.name
+                                };
+                                router.pushUrl({ url: 'pages/PluginHost', params: params });
+                            }
+                        });
+                    }, Row);
+                    this.observeComponentCreation2((elmtId, isInitialRender) => {
+                        Text.create('米家原版插件（实验）');
+                        Text.fontSize(14);
+                        Text.fontColor('#1677FF');
+                    }, Text);
+                    Text.pop();
+                    this.observeComponentCreation2((elmtId, isInitialRender) => {
+                        Text.create(' ›');
+                        Text.fontSize(14);
+                        Text.fontColor('#1677FF');
+                    }, Text);
+                    Text.pop();
+                    Row.pop();
+                    this.observeComponentCreation2((elmtId, isInitialRender) => {
                         If.create();
                         if (this.loading) {
                             this.ifElseBranchUpdateFunction(0, () => {
@@ -1733,6 +1764,8 @@ class DeviceControl extends ViewPU {
     }
     rerender() {
         this.updateDirtyElements();
+    }
+    public __resetStateVarsOnReuse__Internal(params: Object): void {
     }
     static getEntryName(): string {
         return "DeviceControl";
