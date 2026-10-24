@@ -749,7 +749,7 @@ function sleep(ms: number): Promise<void> {
 const NONE_TTL_MS: number = 24 * 3600 * 1000;
 
 function nonePath(ctx: common.Context): string {
-  return rootDir(ctx) + '/none.json';
+  return rootDir(ctx) + '/none_v2.json';
 }
 
 function loadNone(ctx: common.Context): Record<string, number> {

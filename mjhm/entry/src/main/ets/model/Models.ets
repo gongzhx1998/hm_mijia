@@ -10,6 +10,7 @@ export interface Device {
   roomId: string;           // 所属房间
   online: boolean;          // 在线状态
   icon: string;             // 图标资源名
+  iconUrl?: string;         // 米家云真实产品图标 URL（/v2/productconfig/single_pull icon_real）
   token?: string;           // 设备 token（局域网控制用，云端提取）
   ip?: string;              // 局域网 IP
   props: Record<string, string | number | boolean>; // 设备属性（可读状态）
@@ -35,6 +36,9 @@ export interface Home {
   name: string;
   roomCount: number;
   deviceCount: number;
+  latitude?: number;
+  longitude?: number;
+  address?: string;
 }
 
 /** 场景动作 */

@@ -570,15 +570,17 @@
     return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
   }
 
+  var TRANSPARENT_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
   function applyImageSource(el, src) {
     if (!el) return;
     var resolved = '';
     if (Array.isArray(src)) src = src[0];
-    if (src == null) return;
-    if (typeof src === 'number') resolved = resolveAssetId(src);
-    else if (typeof src === 'string') resolved = resolveUri(src);
-    else if (typeof src === 'object') resolved = resolveAsset(src);
-    if (resolved) el.setAttribute('src', resolved);
+    if (src != null && src !== '') {
+      if (typeof src === 'number') resolved = resolveAssetId(src);
+      else if (typeof src === 'string') resolved = resolveUri(src);
+      else if (typeof src === 'object') resolved = resolveAsset(src);
+    }
+    el.setAttribute('src', resolved || TRANSPARENT_GIF);
   }
 
   // react-native-svg 9.x (Android) brush: [0, argbInt] solid | [1, 'brushRef'] gradient/pattern | [2] currentColor
@@ -944,9 +946,14 @@
         el.style.objectFit = 'cover'; // RN Image default resizeMode
         el.style.display = 'flex';
         el.style.flexShrink = '0';
+        el.style.border = 'none';
+        el.style.outline = 'none';
         el.alt = '';
+        el.setAttribute('src', TRANSPARENT_GIF);
         el.addEventListener('error', function () {
-          logUnresolved(el.getAttribute('src') || '(img error)');
+          var failedSrc = el.getAttribute('src') || '(img error)';
+          logUnresolved(failedSrc);
+          if (failedSrc !== TRANSPARENT_GIF) el.setAttribute('src', TRANSPARENT_GIF);
         });
         el.addEventListener('load', function () { scheduleLayoutEvents(); });
         break;
@@ -2041,13 +2048,355 @@
   }, ['isReduceMotionEnabled', 'isTouchExplorationEnabled']);
 
   registerModule('KeyboardObserver', [], {}, {});
+  // NativeAnimatedModule 完整实现：支持 value / interpolation / addition / subtraction / multiplication /
+  // division / modulus / diffclamp / transform / style / props 节点拓扑与 frames / timing / spring / decay 动画驱动，
+  // 驱动空气净化器悬浮粒子（Animated.View useNativeDriver: true）等原生动画流畅运行。
+  var _animNodes = HOST._animNodes = Object.create(null);
+  var _activeAnims = HOST._activeAnims = Object.create(null);
+  var _animRafId = null;
+
+  function _evalInterp(val, cfg) {
+    var inR = cfg.inputRange || [0, 1];
+    var outR = cfg.outputRange || [0, 1];
+    if (!inR.length || !outR.length) return 0;
+    var i = 1;
+    for (; i < inR.length - 1; i++) {
+      if (inR[i] >= val) break;
+    }
+    var idx = i - 1;
+    var inMin = inR[idx], inMax = inR[idx + 1];
+    var outMin = outR[idx], outMax = outR[idx + 1];
+    var t = (inMax === inMin) ? 1 : (val - inMin) / (inMax - inMin);
+    var extL = cfg.extrapolateLeft || cfg.extrapolate || 'extend';
+    var extR = cfg.extrapolateRight || cfg.extrapolate || 'extend';
+    if (t < 0) {
+      if (extL === 'identity') return val;
+      if (extL === 'clamp') t = 0;
+    } else if (t > 1) {
+      if (extR === 'identity') return val;
+      if (extR === 'clamp') t = 1;
+    }
+    if (typeof outMin === 'number' && typeof outMax === 'number') {
+      return outMin + t * (outMax - outMin);
+    }
+    return t < 0.5 ? outMin : outMax;
+  }
+
+  function _getNodeVal(tag) {
+    var n = _animNodes[tag];
+    if (!n) return 0;
+    var c = n.config;
+    if (c.type === 'value') {
+      return (n.value || 0) + (n.offset || 0);
+    }
+    if (c.type === 'interpolation') {
+      var pTag = n.parents[0];
+      return _evalInterp(_getNodeVal(pTag), c);
+    }
+    if (c.type === 'addition' && Array.isArray(c.input)) {
+      var sum = 0;
+      for (var i = 0; i < c.input.length; i++) sum += _getNodeVal(c.input[i]);
+      return sum;
+    }
+    if (c.type === 'subtraction' && Array.isArray(c.input) && c.input.length >= 2) {
+      return _getNodeVal(c.input[0]) - _getNodeVal(c.input[1]);
+    }
+    if (c.type === 'multiplication' && Array.isArray(c.input)) {
+      var prod = 1;
+      for (var j = 0; j < c.input.length; j++) prod *= _getNodeVal(c.input[j]);
+      return prod;
+    }
+    if (c.type === 'division' && Array.isArray(c.input) && c.input.length >= 2) {
+      var denom = _getNodeVal(c.input[1]);
+      return denom !== 0 ? _getNodeVal(c.input[0]) / denom : 0;
+    }
+    if (c.type === 'modulus' && c.input != null && c.modulus) {
+      var mv = _getNodeVal(c.input);
+      var mod = c.modulus;
+      return ((mv % mod) + mod) % mod;
+    }
+    if (c.type === 'diffclamp' && c.input != null) {
+      var dv = _getNodeVal(c.input);
+      var diff = (n._lastIn != null) ? (dv - n._lastIn) : 0;
+      n._lastIn = dv;
+      var cur = (n._clamped != null ? n._clamped : 0) + diff;
+      var mn = c.min != null ? c.min : -Infinity;
+      var mx = c.max != null ? c.max : Infinity;
+      n._clamped = Math.min(mx, Math.max(mn, cur));
+      return n._clamped;
+    }
+    return n.value || 0;
+  }
+
+  function _evalTransformNode(n) {
+    var trs = (n.config && n.config.transforms) || [];
+    var out = [];
+    for (var i = 0; i < trs.length; i++) {
+      var tc = trs[i];
+      var prop = tc.property;
+      var val = tc.type === 'animated' ? _getNodeVal(tc.nodeTag) : tc.value;
+      if ((prop === 'rotate' || prop === 'rotateX' || prop === 'rotateY' || prop === 'rotateZ') && typeof val === 'number') {
+        val = val + 'rad';
+      }
+      var obj = {};
+      obj[prop] = val;
+      out.push(obj);
+    }
+    return out;
+  }
+
+  function _evalStyleNode(n) {
+    var stCfg = (n.config && n.config.style) || {};
+    var out = {};
+    var keys = Object.keys(stCfg);
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      var childTag = stCfg[k];
+      var child = _animNodes[childTag];
+      if (!child) continue;
+      if (child.config.type === 'transform') {
+        out.transform = _evalTransformNode(child);
+      } else {
+        out[k] = _getNodeVal(childTag);
+      }
+    }
+    return out;
+  }
+
+  function _applyPropsNode(n) {
+    if (!n || !n.viewTags || !n.viewTags.length) return;
+    var pCfg = (n.config && n.config.props) || {};
+    var stPatch = {};
+    var keys = Object.keys(pCfg);
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      var childTag = pCfg[k];
+      var child = _animNodes[childTag];
+      if (!child) continue;
+      if (k === 'style' && child.config.type === 'style') {
+        var sObj = _evalStyleNode(child);
+        var sKeys = Object.keys(sObj);
+        for (var j = 0; j < sKeys.length; j++) stPatch[sKeys[j]] = sObj[sKeys[j]];
+      } else {
+        stPatch[k] = _getNodeVal(childTag);
+      }
+    }
+    for (var v = 0; v < n.viewTags.length; v++) {
+      var rec = HOST.views[n.viewTags[v]];
+      if (rec && rec.el) {
+        applyStyle(rec.el, stPatch);
+      }
+    }
+  }
+
+  function _propagateFrom(rootTags) {
+    var visited = Object.create(null);
+    var propsToUpdate = [];
+    var stack = rootTags.slice();
+    while (stack.length) {
+      var t = stack.pop();
+      if (visited[t]) continue;
+      visited[t] = 1;
+      var node = _animNodes[t];
+      if (!node) continue;
+      if (node.config && node.config.type === 'props') {
+        propsToUpdate.push(node);
+      }
+      var ch = node.children;
+      if (ch) {
+        for (var i = 0; i < ch.length; i++) {
+          if (!visited[ch[i]]) stack.push(ch[i]);
+        }
+      }
+    }
+    for (var j = 0; j < propsToUpdate.length; j++) {
+      _applyPropsNode(propsToUpdate[j]);
+    }
+  }
+
+  function _stepNativeAnims() {
+    _animRafId = null;
+    var ids = Object.keys(_activeAnims);
+    if (!ids.length) return;
+    var now = Date.now();
+    var dirtyRoots = [];
+    var ended = [];
+    for (var i = 0; i < ids.length; i++) {
+      var aid = ids[i];
+      var a = _activeAnims[aid];
+      if (!a) continue;
+      var node = _animNodes[a.nodeTag];
+      if (!node) {
+        delete _activeAnims[aid];
+        continue;
+      }
+      var cfg = a.config;
+      if (cfg.type === 'frames' && Array.isArray(cfg.frames) && cfg.frames.length > 0) {
+        var elapsed = now - a.startTime;
+        var frameIdx = Math.floor(elapsed / 16.6666667);
+        var lastIdx = cfg.frames.length - 1;
+        if (frameIdx >= lastIdx) {
+          var iters = cfg.iterations != null ? cfg.iterations : 1;
+          if (iters === -1 || a.iter < iters) {
+            a.iter++;
+            a.startTime = now;
+            node.value = a.fromValue;
+            dirtyRoots.push(a.nodeTag);
+          } else {
+            node.value = a.toValue;
+            dirtyRoots.push(a.nodeTag);
+            delete _activeAnims[aid];
+            ended.push({ resolve: a.resolve, finished: true });
+          }
+        } else {
+          var f = cfg.frames[Math.max(0, frameIdx)];
+          node.value = a.fromValue + f * (a.toValue - a.fromValue);
+          dirtyRoots.push(a.nodeTag);
+        }
+      } else {
+        node.value = a.toValue;
+        dirtyRoots.push(a.nodeTag);
+        delete _activeAnims[aid];
+        ended.push({ resolve: a.resolve, finished: true });
+      }
+    }
+    if (dirtyRoots.length) {
+      _propagateFrom(dirtyRoots);
+    }
+    for (var k = 0; k < ended.length; k++) {
+      if (ended[k].resolve) {
+        ended[k].resolve({ finished: ended[k].finished });
+      }
+    }
+    if (Object.keys(_activeAnims).length > 0) {
+      _scheduleNativeAnimTick();
+    }
+  }
+
+  function _scheduleNativeAnimTick() {
+    if (_animRafId != null) return;
+    if (HOST.nativeRaf) {
+      _animRafId = HOST.nativeRaf(_stepNativeAnims);
+    } else {
+      _animRafId = _nST(_stepNativeAnims, 16);
+    }
+  }
+
   registerModule('NativeAnimatedModule', [
     'createAnimatedNode', 'startListeningToAnimatedNodeValue', 'stopListeningToAnimatedNodeValue',
     'connectAnimatedNodes', 'disconnectAnimatedNodes', 'startAnimatingNode', 'stopAnimation',
     'setAnimatedNodeValue', 'setAnimatedNodeOffset', 'flattenAnimatedNodeOffset', 'extractAnimatedNodeOffset',
     'connectAnimatedNodeToView', 'disconnectAnimatedNodeFromView', 'restoreDefaultValues', 'dropAnimatedNode',
     'addAnimatedEventToView', 'removeAnimatedEventFromView', 'addListener', 'removeListeners'
-  ], {}, new Proxy({}, { get: function () { return function () {}; } }));
+  ], {}, {
+    createAnimatedNode: function (tag, config) {
+      _animNodes[tag] = {
+        tag: tag,
+        config: config || {},
+        value: (config && typeof config.value === 'number') ? config.value : 0,
+        offset: (config && typeof config.offset === 'number') ? config.offset : 0,
+        parents: [],
+        children: [],
+        viewTags: []
+      };
+    },
+    startListeningToAnimatedNodeValue: function (tag) {
+      if (_animNodes[tag]) _animNodes[tag].listening = true;
+    },
+    stopListeningToAnimatedNodeValue: function (tag) {
+      if (_animNodes[tag]) _animNodes[tag].listening = false;
+    },
+    connectAnimatedNodes: function (parentTag, childTag) {
+      var p = _animNodes[parentTag];
+      var c = _animNodes[childTag];
+      if (p && p.children.indexOf(childTag) < 0) p.children.push(childTag);
+      if (c && c.parents.indexOf(parentTag) < 0) c.parents.push(parentTag);
+      _propagateFrom([parentTag]);
+    },
+    disconnectAnimatedNodes: function (parentTag, childTag) {
+      var p = _animNodes[parentTag];
+      var c = _animNodes[childTag];
+      if (p) { var i = p.children.indexOf(childTag); if (i >= 0) p.children.splice(i, 1); }
+      if (c) { var j = c.parents.indexOf(parentTag); if (j >= 0) c.parents.splice(j, 1); }
+    },
+    startAnimatingNode: function (animationId, nodeTag, config) {
+      var node = _animNodes[nodeTag];
+      var fromVal = node ? (node.value || 0) : 0;
+      var toVal = (config && typeof config.toValue === 'number') ? config.toValue : 1;
+      return new Promise(function (resolve) {
+        _activeAnims[animationId] = {
+          id: animationId,
+          nodeTag: nodeTag,
+          config: config || {},
+          fromValue: fromVal,
+          toValue: toVal,
+          startTime: Date.now(),
+          iter: 1,
+          resolve: resolve
+        };
+        _scheduleNativeAnimTick();
+      });
+    },
+    stopAnimation: function (animationId) {
+      var a = _activeAnims[animationId];
+      if (a) {
+        delete _activeAnims[animationId];
+        if (a.resolve) {
+          a.resolve({ finished: false });
+        }
+      }
+    },
+    setAnimatedNodeValue: function (nodeTag, value) {
+      var n = _animNodes[nodeTag];
+      if (n) {
+        n.value = Number(value) || 0;
+        _propagateFrom([nodeTag]);
+      }
+    },
+    setAnimatedNodeOffset: function (nodeTag, offset) {
+      var n = _animNodes[nodeTag];
+      if (n) {
+        n.offset = Number(offset) || 0;
+        _propagateFrom([nodeTag]);
+      }
+    },
+    flattenAnimatedNodeOffset: function (nodeTag) {
+      var n = _animNodes[nodeTag];
+      if (n) {
+        n.value = (n.value || 0) + (n.offset || 0);
+        n.offset = 0;
+      }
+    },
+    extractAnimatedNodeOffset: function (nodeTag) {
+      var n = _animNodes[nodeTag];
+      if (n) {
+        n.offset = (n.value || 0) + (n.offset || 0);
+        n.value = 0;
+      }
+    },
+    connectAnimatedNodeToView: function (nodeTag, viewTag) {
+      var n = _animNodes[nodeTag];
+      if (n) {
+        if (n.viewTags.indexOf(viewTag) < 0) n.viewTags.push(viewTag);
+        _applyPropsNode(n);
+      }
+    },
+    disconnectAnimatedNodeFromView: function (nodeTag, viewTag) {
+      var n = _animNodes[nodeTag];
+      if (n) {
+        var idx = n.viewTags.indexOf(viewTag);
+        if (idx >= 0) n.viewTags.splice(idx, 1);
+      }
+    },
+    restoreDefaultValues: function () {},
+    dropAnimatedNode: function (tag) {
+      delete _animNodes[tag];
+    },
+    addAnimatedEventToView: function () {},
+    removeAnimatedEventFromView: function () {},
+    addListener: function () {},
+    removeListeners: function () {}
+  });
 
   registerModule('Appearance', ['getColorScheme'], {}, {
     getColorScheme: function () { return 'light'; }
@@ -2206,19 +2555,15 @@
     requestAuthorizedDeviceListData: function () { return Promise.resolve([]); },
     getDevicesInfoFromDids: function () { return Promise.resolve([]); },
     setPrivacyConfirmation: function () { return Promise.resolve(true); },
-    getNativePrivacyConfirmationVersion: function () { return Promise.resolve(0); },
+    // SDK ProtocolManager: MIOTDevice.getNativePrivacyConfirmationVersion(opts, (ok, res) => { localVer = res.data.version })
+    // 必须走 Xiaomi 单回调风格 (ok, { code: 0, data: { version: '1.0' } })，这样插件自动通过隐私检查并发出 CLOUD_PRIVACY_EVENT_TYPES.AGREED
+    getNativePrivacyConfirmationVersion: function () { return Promise.resolve({ code: 0, data: { version: '1.0' } }); },
     setNativePrivacyConfirmationVersion: function () { return Promise.resolve(true); },
     setCommonUseDeviceSwitch: function () { return Promise.resolve(true); },
     reportDeviceGPSInfo: function () { return Promise.resolve(true); },
     sendWakeUpCommandToDevice: function () { return Promise.resolve(true); },
     sendKeyFramePayLoad: function () { return Promise.resolve(true); }
-  }, ['getVersion', 'getDeviceTimeZone', 'changeDeviceName', 'loadSubDevices', 'getLinkedBTDevices', 'getRecommendScenes',
-    'getRoomInfoForCurrentHome', 'getRoomLocation', 'getHomeDeviceList', 'getHomeMemberList', 'getAllDeviceList',
-    'getAllDevicesOfBelongedCompanies', 'getCurrentSelectHomeInfo', 'getCurrentDeviceValue', 'getFreqFlag',
-    'getFreqCameraFlag', 'hasSetDeviceCall', 'isBelongToCarRoom', 'requestAuthorizedDeviceListData',
-    'getDevicesInfoFromDids', 'setPrivacyConfirmation', 'getNativePrivacyConfirmationVersion',
-    'setNativePrivacyConfirmationVersion', 'setCommonUseDeviceSwitch', 'reportDeviceGPSInfo',
-    'sendWakeUpCommandToDevice', 'sendKeyFramePayLoad', 'subscribeMessages', 'unsubscribeMessages']);
+  }, ['getDevicesInfoFromDids']);
 
   registerModule('MIOTPackage', [
     'apiReport', 'getPluginAppConfigValueForKey', 'installModule', 'onDeventJs', 'onPackageLifecycle',
@@ -2312,9 +2657,7 @@
     convertCronToDate: function () { return Promise.resolve({}); },
     convertDateToCron: function () { return Promise.resolve(''); }
   }, [
-    'getWifiList', 'getDarkModeStatus', 'getDevicesWithModel', 'getConnectedWifi',
-    'encodeMD5', 'encodeBase64', 'decodeBase64', 'encodeSHA1', 'encodeSHA2',
-    'getAppSystemSupport', 'executeMethod', 'convertCronToDate', 'convertDateToCron'
+    'getWifiList', 'getDarkModeStatus', 'getAppSystemSupport'
   ]);
 
   // After a successful cloud set, push the new values like the native device-message channel
@@ -2377,6 +2720,7 @@
     callSmartHomeCameraAPI: function () { var cb = arguments[arguments.length - 1]; if (typeof cb === 'function') cb(true, '{}'); },
     callSmartHomeCameraAPIWithStringParam: function () { var cb = arguments[arguments.length - 1]; if (typeof cb === 'function') cb(true, '{}'); },
     callSmartChatAPI: function () { var cb = arguments[arguments.length - 1]; if (typeof cb === 'function') cb(true, '{}'); },
+    // Android SDK: MIOTService.getServerName(function(res) { ... }) 单参回调风格，放入 promiseIdx 让 settleNativeCallbacks 传 [res]
     getServerName: function () { return Promise.resolve({ countryCode: 'cn', serverCode: 'cn' }); },
     getServiceTokenWithSid: function () { return Promise.resolve({}); },
     getHomeList: function () { return Promise.resolve([]); },
@@ -2397,20 +2741,22 @@
     deleteSceneRecords: function () { return Promise.resolve(true); },
     editSceneRecord: function () { return Promise.resolve(true); }
   }, [
-    'getServerName', 'getServiceTokenWithSid', 'getHomeList', 'getDeviceIcon', 'getCustomPluginInfo',
-    'getHomepageSettings', 'getSTDGuideSettings', 'getABTestConfigByPath', 'getABTestConfigByDidAndPath',
-    'activeABTestByPath', 'deleteDevice', 'connectWifi', 'fetchMultilingualResources',
-    'actionTemplatesForQualifiedDid', 'deleteSceneRecords', 'editSceneRecord'
+    'getServerName', 'getServiceTokenWithSid'
   ]);
 
   registerModule('MIOTSpec', ['getCurrentSpecValueWithDid', 'getSpecString', 'getSpec', 'setSpec'], {}, {
     getCurrentSpecValueWithDid: function (did) {
-      return hostInvoke('getSpecProps', { did: did });
+      return hostInvoke('getSpecProps', { did: did || HOST.device.did });
     },
-    getSpecString: function () { return Promise.resolve(''); },
+    getSpecString: function (did) {
+      return hostInvoke('getSpecString', { did: did || HOST.device.did }).then(function (res) {
+        if (typeof res === 'string') return res;
+        return res ? JSON.stringify(res) : '';
+      });
+    },
     getSpec: function () { return Promise.resolve({}); },
     setSpec: function () { return Promise.resolve(true); }
-  }, ['getCurrentSpecValueWithDid', 'getSpecString', 'getSpec', 'setSpec']);
+  }, ['getCurrentSpecValueWithDid', 'getSpec', 'setSpec']);
 
   registerModule('MIOTRPC', ['nativeCall', 'standardCall'], {}, {
     nativeCall: function (api, params) {
@@ -2514,9 +2860,16 @@
       else invokeBridgeCallback(failId, [value]);
       return;
     }
-    // Xiaomi single-callback style: cb(ok, res)
-    if (succId != null) invokeBridgeCallback(succId, [ok, value]);
-    else if (failId != null) invokeBridgeCallback(failId, [value]);
+    // Single-callback style: NativeAnimatedModule endCallback expects ({finished}), Xiaomi expects (ok, res)
+    if (succId != null) {
+      if (value && typeof value === 'object' && typeof value.finished === 'boolean' && Object.keys(value).length === 1) {
+        invokeBridgeCallback(succId, [value]);
+      } else {
+        invokeBridgeCallback(succId, [ok, value]);
+      }
+    } else if (failId != null) {
+      invokeBridgeCallback(failId, [value]);
+    }
   }
 
   function invokeNative(moduleID, methodID, params) {
@@ -2531,7 +2884,21 @@
       settleNativeCallbacks(isP0 ? peeled0.failId : peeled0.succId, isP0 ? peeled0.succId : peeled0.failId, false, { message: 'missing method ' + mod.name + '.' + methodName });
       return undefined;
     }
-    var peeled = peelBridgeCallbacks(params);
+    // 仅在方法签名真的带回调（或属于 promiseIdx）时才从参数尾部剥离数字 callbackId！
+    // 否则像 NativeAnimatedModule.connectAnimatedNodes(parentTag, childTag) / setAnimatedNodeValue(tag, 0)
+    // 这种纯数字参数的方法，末尾的两个数字会被误当成 succId/failId 剥光并触发伪回调！
+    var NO_CALLBACK_METHODS = {
+      createAnimatedNode: 1, startListeningToAnimatedNodeValue: 1, stopListeningToAnimatedNodeValue: 1,
+      connectAnimatedNodes: 1, disconnectAnimatedNodes: 1, stopAnimation: 1,
+      setAnimatedNodeValue: 1, setAnimatedNodeOffset: 1, flattenAnimatedNodeOffset: 1, extractAnimatedNodeOffset: 1,
+      connectAnimatedNodeToView: 1, disconnectAnimatedNodeFromView: 1, restoreDefaultValues: 1, dropAnimatedNode: 1,
+      addAnimatedEventToView: 1, removeAnimatedEventFromView: 1,
+      createTimer: 1, deleteTimer: 1, setSendIdleEvents: 1,
+      manageChildren: 1, setChildren: 1, createView: 1, updateView: 1
+    };
+    var peeled = NO_CALLBACK_METHODS[methodName]
+      ? { args: (params || []).slice(), succId: null, failId: null }
+      : peelBridgeCallbacks(params);
     // Promise 方法：RN 的 genMethod 先传 resolve（偶数 id）再传 reject（奇数 id），与回调风格相反
     if (mod.promiseIdx.indexOf(methodID) >= 0 && peeled.succId != null && peeled.failId != null) {
       var resolveId = peeled.failId;
@@ -2820,6 +3187,15 @@
       if (p.apiLevel) c.apiLevel = Number(p.apiLevel);
       c.plugPath = HOST.plugBase;
       c.localFilePath = HOST.localBase;
+      if (p.entryResource && p.entryResource.instance) {
+        c.entryInfo = {
+          entrance: 'main',
+          info: {
+            resource: p.entryResource,
+            payload: {}
+          }
+        };
+      }
     }
   };
 

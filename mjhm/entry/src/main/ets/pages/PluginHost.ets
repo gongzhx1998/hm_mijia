@@ -84,6 +84,7 @@ struct PluginHost {
   @State unavailable: boolean = false;
   @State progressPct: number = -1;
   private pluginMeta: PluginMeta | null = null;
+  private entryResource: Record<string, Object> | null = null;
   private hostPageLoaded: boolean = false;
   private pid: number = 0;
   private online: boolean = true;
@@ -141,6 +142,10 @@ struct PluginHost {
         this.statusText = text;
         this.progressPct = pct;
       });
+      if (meta.packageName === 'miot.plugin.spec' || meta.pluginId === 1006883) {
+        this.entryResource = await MiCloud.getStdPluginResource(this.did);
+        Logger.info(TAG, `stdPlugin resource loaded for ${this.model} (${this.did}): hasRes=${this.entryResource !== null}`);
+      }
       this.pluginMeta = meta;
       this.progressPct = -1;
       Logger.info(TAG, `PERF pluginReady ${meta.key} pkg=${meta.packageName} +${Date.now() - t0}ms page+${Date.now() - this.tPage}ms`);
@@ -411,6 +416,9 @@ struct PluginHost {
       'model': meta.model,
       'skipSdk': this.usingWarmController
     };
+    if (this.entryResource !== null) {
+      pl['entryResource'] = this.entryResource;
+    }
     const dev: Record<string, Object> = {
       'did': this.did,
       'model': this.model,
@@ -494,38 +502,31 @@ struct PluginHost {
     if (action === 'callMethod') {
       const method: string = String(payload['method'] ?? '');
       const rawParams: Object | undefined = payload['params'] as Object | undefined;
-      const params: (string | number | boolean)[] = [];
-      if (rawParams !== undefined && Array.isArray(rawParams)) {
-        const arr: Object[] = rawParams as Object[];
-        for (let i = 0; i < arr.length; i++) {
-          const v: Object = arr[i];
-          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            params.push(v as string | number | boolean);
-          } else {
-            params.push(JSON.stringify(v));
-          }
-        }
-      } else if (typeof rawParams === 'string') {
+      let rpcParams: Object = [] as Object[];
+      if (typeof rawParams === 'string') {
         try {
-          const parsed: Object = JSON.parse(rawParams) as Object;
-          if (Array.isArray(parsed)) {
-            const arr2: Object[] = parsed as Object[];
-            for (let j = 0; j < arr2.length; j++) {
-              const v2: Object = arr2[j];
-              if (typeof v2 === 'string' || typeof v2 === 'number' || typeof v2 === 'boolean') {
-                params.push(v2 as string | number | boolean);
-              } else {
-                params.push(JSON.stringify(v2));
-              }
-            }
-          }
+          rpcParams = JSON.parse(rawParams) as Object;
         } catch (_e) {
+          rpcParams = [rawParams] as Object[];
         }
+      } else if (rawParams !== undefined && rawParams !== null) {
+        rpcParams = rawParams;
       }
       const did: string = this.targetDid(payload);
-      Logger.info(TAG, `bridge callMethod did=${did} ${method} params=${JSON.stringify(params)}`);
-      const resp: Record<string, Object> = await MiCloud.rpcRemote(did, method, params);
-      Logger.info(TAG, `bridge callMethod done code=${Number(resp['code'] ?? -1)}`);
+      Logger.info(TAG, `bridge callMethod did=${did} ${method} params=${JSON.stringify(rpcParams).substring(0, 300)}`);
+      // 云米净水器等插件通过 callMethodFromCloud("get_properties" / "set_properties", [{did,siid,piid}, ...]) 读写属性：
+      // 保留对象元素原样（绝不能把 {did,siid,piid} 转成字符串），若 /home/rpc/{did} 返回非 0 则自动回退 /miotspec/prop/get|set
+      const resp: Record<string, Object> = await MiCloud.rpcRemote(did, method, rpcParams);
+      const rcode: number = Number(resp['code'] ?? -1);
+      Logger.info(TAG, `bridge callMethod done code=${rcode}`);
+      if (rcode !== 0 && method === 'get_properties') {
+        const specPayload: Record<string, Object> = { 'did': did, 'params': rpcParams };
+        return await this.handleSpecGet(specPayload);
+      }
+      if (rcode !== 0 && method === 'set_properties') {
+        const specPayload: Record<string, Object> = { 'did': did, 'params': rpcParams };
+        return await this.handleSpecSet(specPayload);
+      }
       return JSON.stringify(resp);
     }
     if (action === 'callSmartHomeAPI') {
@@ -552,6 +553,12 @@ struct PluginHost {
     }
     if (action === 'getSpecProps') {
       return JSON.stringify({} as Record<string, Object>);
+    }
+    if (action === 'getSpecString') {
+      const did: string = this.targetDid(payload);
+      const specStr: string = await MiCloud.getSpecInstanceString(did);
+      Logger.info(TAG, `bridge getSpecString did=${did} len=${specStr.length}`);
+      return specStr;
     }
     return JSON.stringify(null);
   }

@@ -6,7 +6,7 @@ import { bundleManager } from '@kit.AbilityKit';
 const DOMAIN: number = 0x0D01;
 const TAG: string = 'RnHostWarm';
 /** 缓存格式版本。rawfile 内容变化会被指纹自动检测，无需手动递增 */
-export const RNHHOST_CACHE_REV: string = 'c3-20261024-warm5b';
+export const RNHHOST_CACHE_REV: string = 'c3-20261024-airp3';
 
 /** 小文件：每次打开都对 rawfile 内容做指纹，变化即重拷 */
 const SMALL_FILES: string[] = ['index.html', 'rnhost/host.js', 'rnhost/boot.js', 'plugin/res/files.js'];

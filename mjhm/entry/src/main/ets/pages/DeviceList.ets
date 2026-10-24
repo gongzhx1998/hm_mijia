@@ -86,7 +86,14 @@ struct DeviceList {
   @Builder
   DeviceRow(device: Device) {
     Row() {
-      Text(this.deviceIcon(device.type)).fontSize(24)
+      if (device.iconUrl !== undefined && device.iconUrl !== '') {
+        Image(device.iconUrl)
+          .width(36)
+          .height(36)
+          .objectFit(ImageFit.Contain)
+      } else {
+        Text(this.deviceIcon(device.type)).fontSize(24)
+      }
       Column() {
         Text(device.name)
           .fontSize(15)

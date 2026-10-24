@@ -2,8 +2,16 @@ import { Device, Home, Room, Scene, DeviceCommand } from '../model/Models';
 import { AppConfig, Logger } from '../common/AppConfig';
 import * as MiCloud from './MiCloud';
 import * as Storage from './Storage';
+import { geoLocationManager } from '@kit.LocationKit';
+import { wifiManager } from '@kit.ConnectivityKit';
+import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 
 const TAG = 'ApiService';
+const KEY_PRODUCT_ICONS = 'mijia_product_icons_v1';
+const KEY_UNION_ORDERS = 'mijia_union_orders_v1';
+
+let memoryIcons: Record<string, string> | null = null;
+let memoryUnionOrders: Record<string, MiCloud.HomeUnionOrder> | null = null;
 
 /**
  * 数据服务层 —— 全真实，无 mock：
@@ -12,12 +20,12 @@ const TAG = 'ApiService';
  * - 场景：本地创建 + 本地存储，手动执行时逐个动作真实下发
  */
 
-/** 获取真实家庭列表 */
-export async function getHomes(): Promise<Home[]> {
-  const cloudHomes = await MiCloud.getHomeList('cn');
+/** 获取真实家庭列表（含经纬度与地址，用于按位置自动切换家庭） */
+export async function getHomes(forceRefresh: boolean = false): Promise<Home[]> {
+  const cloudHomes = await MiCloud.getHomeList('cn', forceRefresh);
   const homes: Home[] = [];
   for (let i = 0; i < cloudHomes.length; i++) {
-    let count = 0;
+    let count = (cloudHomes[i].dids ?? []).length;
     for (let j = 0; j < cloudHomes[i].rooms.length; j++) {
       count += cloudHomes[i].rooms[j].dids.length;
     }
@@ -25,7 +33,10 @@ export async function getHomes(): Promise<Home[]> {
       homeId: cloudHomes[i].id,
       name: cloudHomes[i].name,
       roomCount: cloudHomes[i].rooms.length,
-      deviceCount: count
+      deviceCount: count,
+      latitude: cloudHomes[i].latitude ?? 0,
+      longitude: cloudHomes[i].longitude ?? 0,
+      address: cloudHomes[i].address ?? ''
     };
     homes.push(h);
   }
@@ -58,6 +69,7 @@ export async function getRooms(homeId: string): Promise<Room[]> {
 interface HomeRoomMaps {
   homeOf: Record<string, string>;
   roomOf: Record<string, string>;
+  cloudHomes: MiCloud.CloudHome[];
 }
 
 async function buildHomeRoomMaps(): Promise<HomeRoomMaps> {
@@ -65,6 +77,10 @@ async function buildHomeRoomMaps(): Promise<HomeRoomMaps> {
   const roomOf: Record<string, string> = {};
   const cloudHomes = await MiCloud.getHomeList('cn');
   for (let i = 0; i < cloudHomes.length; i++) {
+    const hDids = cloudHomes[i].dids ?? [];
+    for (let m = 0; m < hDids.length; m++) {
+      homeOf[hDids[m]] = cloudHomes[i].id;
+    }
     const rooms = cloudHomes[i].rooms;
     for (let j = 0; j < rooms.length; j++) {
       const dids = rooms[j].dids;
@@ -74,11 +90,162 @@ async function buildHomeRoomMaps(): Promise<HomeRoomMaps> {
       }
     }
   }
-  const maps: HomeRoomMaps = { homeOf: homeOf, roomOf: roomOf };
+  const maps: HomeRoomMaps = { homeOf: homeOf, roomOf: roomOf, cloudHomes: cloudHomes };
   return maps;
 }
 
-/** 获取真实设备列表（按家庭 + 可选房间过滤；homeId 为空表示不过滤，返回全量） */
+/** 加载并缓存米家云自定义排序（/v2/home/get_union_order） */
+async function ensureUnionOrders(cloudHomes: MiCloud.CloudHome[], forceRefresh: boolean = false): Promise<Record<string, MiCloud.HomeUnionOrder>> {
+  if (!forceRefresh && memoryUnionOrders !== null) {
+    return memoryUnionOrders;
+  }
+  if (!forceRefresh) {
+    const saved = await Storage.getObject<Record<string, MiCloud.HomeUnionOrder>>(KEY_UNION_ORDERS);
+    if (saved !== null && Object.keys(saved).length > 0) {
+      memoryUnionOrders = saved;
+      return saved;
+    }
+  }
+  const fresh = await MiCloud.getUnionOrders(cloudHomes, 'cn');
+  if (Object.keys(fresh).length > 0) {
+    memoryUnionOrders = fresh;
+    await Storage.saveObject(KEY_UNION_ORDERS, fresh);
+    return fresh;
+  }
+  return memoryUnionOrders ?? {};
+}
+
+/** 加载并缓存米家产品真实图标 URL（/v2/productconfig/single_pull -> icon_real） */
+export async function ensureProductIcons(models: string[], forceRefresh: boolean = false): Promise<Record<string, string>> {
+  if (memoryIcons === null) {
+    const saved = await Storage.getObject<Record<string, string>>(KEY_PRODUCT_ICONS);
+    memoryIcons = saved !== null ? saved : {};
+  }
+  const missing: string[] = [];
+  for (let i = 0; i < models.length; i++) {
+    const m = models[i];
+    if (m !== '' && (forceRefresh || memoryIcons[m] === undefined) && missing.indexOf(m) < 0) {
+      missing.push(m);
+    }
+  }
+  if (missing.length > 0) {
+    const fetched = await MiCloud.getProductIcons(missing, 'cn');
+    const keys = Object.keys(fetched);
+    if (keys.length > 0) {
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        memoryIcons[k] = fetched[k];
+      }
+      await Storage.saveObject(KEY_PRODUCT_ICONS, memoryIcons);
+    }
+  }
+  return memoryIcons;
+}
+
+/**
+ * 构建米家官方设备排序序号表（did -> rank）：
+ * 逆向米家 11.8.705 DeviceOrderSourceUnionBase 确认：
+ * 1. 全屋视图（roomId 未指定或为空）：
+ *    优先按 /v2/home/get_union_order 的 front_order_v2 / front_order 顺序排列；
+ *    其余未在 front_order 中的设备，严格按 gethome_merged 中该家庭下 roomlist[j].dids 顺序排列，最后追加 home.dids。
+ * 2. 房间视图（指定 roomId）：
+ *    优先按 union_order 的 room_order[roomId].did_order 排列，再按 gethome_merged 的 room.dids 顺序排列。
+ * 3. 兜底：若仍有不在列表中的设备，按 orderTime 降序 + did 字典序稳定排列，彻底消除 device_list_page 服务端随机顺序。
+ */
+function buildDidRankMap(
+  homeId: string,
+  roomId: string | undefined,
+  cloudHomes: MiCloud.CloudHome[],
+  unionOrders: Record<string, MiCloud.HomeUnionOrder>
+): Record<string, number> {
+  const rank: Record<string, number> = {};
+  let seq = 1;
+  const addDid = (did: string): void => {
+    if (did === '' || did === '-') {
+      return;
+    }
+    if (rank[did] === undefined) {
+      rank[did] = seq++;
+    }
+    // 兼容多键开关子设备（如 1065259619.s2 -> 主 did 1065259619）
+    const dot = did.indexOf('.');
+    if (dot > 0) {
+      const baseDid = did.substring(0, dot);
+      if (rank[baseDid] === undefined) {
+        rank[baseDid] = seq++;
+      }
+    }
+  };
+
+  for (let i = 0; i < cloudHomes.length; i++) {
+    const ch = cloudHomes[i];
+    if (homeId !== '' && ch.id !== homeId) {
+      continue;
+    }
+    const uo: MiCloud.HomeUnionOrder | undefined = unionOrders[ch.id];
+    if (roomId !== undefined && roomId !== '') {
+      if (uo !== undefined && uo.roomOrders[roomId] !== undefined) {
+        const ro = uo.roomOrders[roomId];
+        for (let k = 0; k < ro.length; k++) {
+          addDid(ro[k]);
+        }
+      }
+      for (let j = 0; j < ch.rooms.length; j++) {
+        if (ch.rooms[j].id === roomId) {
+          const rd = ch.rooms[j].dids;
+          for (let k = 0; k < rd.length; k++) {
+            addDid(rd[k]);
+          }
+        }
+      }
+    } else {
+      if (uo !== undefined) {
+        for (let k = 0; k < uo.frontOrder.length; k++) {
+          addDid(uo.frontOrder[k]);
+        }
+      }
+      for (let j = 0; j < ch.rooms.length; j++) {
+        const rd = ch.rooms[j].dids;
+        for (let k = 0; k < rd.length; k++) {
+          addDid(rd[k]);
+        }
+      }
+      const hd = ch.dids ?? [];
+      for (let k = 0; k < hd.length; k++) {
+        addDid(hd[k]);
+      }
+    }
+  }
+  return rank;
+}
+
+/** 按米家官方排序规则对设备列表做稳定排序 */
+export function sortDevicesOfficial(
+  devices: Device[],
+  orderTimeOf: Record<string, number>,
+  rankMap: Record<string, number>
+): Device[] {
+  const copy: Device[] = [];
+  for (let i = 0; i < devices.length; i++) {
+    copy.push(devices[i]);
+  }
+  copy.sort((a: Device, b: Device): number => {
+    const ra = rankMap[a.did] ?? 999999;
+    const rb = rankMap[b.did] ?? 999999;
+    if (ra !== rb) {
+      return ra - rb;
+    }
+    const ta = orderTimeOf[a.did] ?? 0;
+    const tb = orderTimeOf[b.did] ?? 0;
+    if (ta !== tb) {
+      return tb - ta;
+    }
+    return a.did < b.did ? -1 : (a.did > b.did ? 1 : 0);
+  });
+  return copy;
+}
+
+/** 获取真实设备列表（按家庭 + 可选房间过滤，严格遵循米家官方固定排序并填充真实产品图标） */
 export async function getDevices(homeId: string, roomId?: string): Promise<Device[]> {
   let cached: MiCloud.CloudDevice[] | null =
     await Storage.getObject<MiCloud.CloudDevice[]>(AppConfig.KEY_CLOUD_DEVICES);
@@ -89,28 +256,219 @@ export async function getDevices(homeId: string, roomId?: string): Promise<Devic
     cached = fresh;
   }
   const maps = await buildHomeRoomMaps();
-  const devices: Device[] = [];
+  const unionOrders = await ensureUnionOrders(maps.cloudHomes, false);
+  const models: string[] = [];
+  const orderTimeOf: Record<string, number> = {};
+  const rawDevices: Device[] = [];
   for (let i = 0; i < cached.length; i++) {
     const cd = cached[i];
     const hid = maps.homeOf[cd.did] ?? '';
     const rid = maps.roomOf[cd.did] ?? '';
-    // 按家庭过滤（homeId 非空时）
     if (homeId !== '' && hid !== homeId) {
       continue;
     }
-    if (roomId !== undefined && rid !== roomId) {
+    if (roomId !== undefined && roomId !== '' && rid !== roomId) {
       continue;
     }
-    devices.push(cloudToDevice(cd, rid));
+    orderTimeOf[cd.did] = cd.orderTime ?? 0;
+    if (cd.model !== '' && models.indexOf(cd.model) < 0) {
+      models.push(cd.model);
+    }
+    rawDevices.push(cloudToDevice(cd, rid));
   }
-  return devices;
+  const icons = await ensureProductIcons(models, false);
+  for (let i = 0; i < rawDevices.length; i++) {
+    const u = icons[rawDevices[i].model];
+    if (u !== undefined && u !== '') {
+      rawDevices[i].iconUrl = u;
+    }
+  }
+  const rankMap = buildDidRankMap(homeId, roomId, maps.cloudHomes, unionOrders);
+  return sortDevicesOfficial(rawDevices, orderTimeOf, rankMap);
 }
 
-/** 切换家庭后强制重新拉取设备并刷新缓存（避免缓存里只有旧家庭设备） */
+/** 切换家庭或下拉刷新后强制重新拉取设备并刷新缓存（保持米家官方固定顺序） */
 export async function reloadDevicesForHome(homeId: string): Promise<Device[]> {
   const fresh = await MiCloud.getDevices('cn');
   await Storage.saveObject(AppConfig.KEY_CLOUD_DEVICES, fresh);
+  const maps = await buildHomeRoomMaps();
+  await ensureUnionOrders(maps.cloudHomes, true);
   return getDevices(homeId);
+}
+
+/** 计算两点间球面距离（Haversine，单位：米） */
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number): number => deg * Math.PI / 180.0;
+  const R = 6371000.0;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/** 归一化 MAC/BSSID（转大写去空白） */
+function normBssid(bssid: string): string {
+  return bssid.trim().toUpperCase();
+}
+
+/** 前 5 字节前缀（同一路由器 2.4G/5G/访客网通常仅末字节不同，如 EA:A3:4E:8E:8D:98 与 :9C） */
+function bssidPrefix5(bssid: string): string {
+  const n = normBssid(bssid);
+  const parts = n.split(':');
+  if (parts.length === 6) {
+    return `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}:${parts[4]}`;
+  }
+  return n;
+}
+
+export interface AutoSwitchHomeResult {
+  homeId: string;
+  homeName: string;
+  reason: string;
+  distanceMeters?: number;
+}
+
+/**
+ * 动态申请位置权限（APPROXIMATELY_LOCATION + LOCATION），并根据当前位置或当前连接 Wi-Fi BSSID 自动匹配所在家庭：
+ * 1. 先检查当前连接的 Wi-Fi BSSID 是否与某个家庭（或该家庭下智能设备上报的路由器 BSSID）匹配（精确匹配或同路由器 5 字节前缀匹配）；
+ * 2. 获取系统位置（优先 getLastLocation 快速返回，再尝试 getCurrentLocation），与设置有经纬度的家庭计算 Haversine 距离，
+ *    选距离最近的家庭（有效半径 50km 内，或所有有坐标家庭中最近的一个）。
+ */
+export async function detectNearestHome(ctx: common.UIAbilityContext): Promise<AutoSwitchHomeResult | null> {
+  try {
+    const atManager = abilityAccessCtrl.createAtManager();
+    const perms: Permissions[] = [
+      'ohos.permission.APPROXIMATELY_LOCATION',
+      'ohos.permission.LOCATION'
+    ];
+    try {
+      const grant = await atManager.requestPermissionsFromUser(ctx, perms);
+      Logger.info(TAG, `location permission authResults=${JSON.stringify(grant.authResults)}`);
+    } catch (permErr) {
+      Logger.error(TAG, `requestPermissionsFromUser error: ${permErr}`);
+    }
+
+    const cloudHomes = await MiCloud.getHomeList('cn');
+    if (cloudHomes.length <= 1) {
+      return null;
+    }
+
+    // 1. 尝试通过当前连接的 Wi-Fi BSSID 匹配家庭（即使家庭未设置经纬度也能精准识别）
+    let curBssid = '';
+    try {
+      const linked = await wifiManager.getLinkedInfo();
+      curBssid = normBssid(linked.bssid ?? '');
+      Logger.info(TAG, `current wifi ssid=${linked.ssid} bssid=${curBssid}`);
+    } catch (wifiErr) {
+      Logger.info(TAG, `wifi getLinkedInfo skipped: ${JSON.stringify(wifiErr)}`);
+    }
+
+    let cachedDevs: MiCloud.CloudDevice[] | null =
+      await Storage.getObject<MiCloud.CloudDevice[]>(AppConfig.KEY_CLOUD_DEVICES);
+    if (cachedDevs === null) {
+      cachedDevs = [];
+    }
+    const maps = await buildHomeRoomMaps();
+
+    if (curBssid !== '' && curBssid !== '02:00:00:00:00:00' && curBssid !== '00:00:00:00:00:00') {
+      const curPfx = bssidPrefix5(curBssid);
+      // 1a. 精确匹配家庭/房间/设备 BSSID
+      for (let i = 0; i < cloudHomes.length; i++) {
+        if (normBssid(cloudHomes[i].bssid ?? '') === curBssid) {
+          return { homeId: cloudHomes[i].id, homeName: cloudHomes[i].name, reason: `Wi-Fi BSSID (${curBssid})` };
+        }
+      }
+      for (let i = 0; i < cachedDevs.length; i++) {
+        const db = normBssid(cachedDevs[i].bssid ?? '');
+        if (db !== '' && (db === curBssid || bssidPrefix5(db) === curPfx)) {
+          const hid = maps.homeOf[cachedDevs[i].did] ?? '';
+          for (let j = 0; j < cloudHomes.length; j++) {
+            if (cloudHomes[j].id === hid) {
+              return { homeId: cloudHomes[j].id, homeName: cloudHomes[j].name, reason: `Wi-Fi 路由器匹配 (${cachedDevs[i].name})` };
+            }
+          }
+        }
+      }
+    }
+
+    // 2. 通过 GPS/网络经纬度匹配距离最近的家庭
+    let lat = 0;
+    let lon = 0;
+    try {
+      const lastLoc = geoLocationManager.getLastLocation();
+      if (lastLoc && (lastLoc.latitude !== 0 || lastLoc.longitude !== 0)) {
+        lat = lastLoc.latitude;
+        lon = lastLoc.longitude;
+        Logger.info(TAG, `getLastLocation lat=${lat} lon=${lon}`);
+      }
+    } catch (_eLast) {
+    }
+
+    if (lat === 0 && lon === 0) {
+      try {
+        const req: geoLocationManager.CurrentLocationRequest = {
+          priority: geoLocationManager.LocationRequestPriority.FIRST_FIX,
+          scenario: geoLocationManager.LocationRequestScenario.UNSET,
+          maxAccuracy: 0,
+          timeoutMs: 5000
+        };
+        const curLoc = await geoLocationManager.getCurrentLocation(req);
+        if (curLoc && (curLoc.latitude !== 0 || curLoc.longitude !== 0)) {
+          lat = curLoc.latitude;
+          lon = curLoc.longitude;
+          Logger.info(TAG, `getCurrentLocation lat=${lat} lon=${lon}`);
+        }
+      } catch (locErr) {
+        Logger.info(TAG, `getCurrentLocation skipped: ${JSON.stringify(locErr)}`);
+      }
+    }
+
+    if (lat !== 0 || lon !== 0) {
+      let bestHome: MiCloud.CloudHome | null = null;
+      let bestDist = Number.MAX_VALUE;
+      for (let i = 0; i < cloudHomes.length; i++) {
+        const h = cloudHomes[i];
+        let hLat = h.latitude ?? 0;
+        let hLon = h.longitude ?? 0;
+        // 若家庭本身未填坐标，检查该家庭下是否有设备带坐标
+        if (hLat === 0 && hLon === 0) {
+          for (let d = 0; d < cachedDevs.length; d++) {
+            if ((maps.homeOf[cachedDevs[d].did] ?? '') === h.id) {
+              const dLat = cachedDevs[d].latitude ?? 0;
+              const dLon = cachedDevs[d].longitude ?? 0;
+              if (dLat !== 0 || dLon !== 0) {
+                hLat = dLat;
+                hLon = dLon;
+                break;
+              }
+            }
+          }
+        }
+        if (hLat !== 0 || hLon !== 0) {
+          const dist = haversineMeters(lat, lon, hLat, hLon);
+          Logger.info(TAG, `home "${h.name}" (${h.id}) distance=${Math.round(dist)}m`);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestHome = h;
+          }
+        }
+      }
+      if (bestHome !== null) {
+        return {
+          homeId: bestHome.id,
+          homeName: bestHome.name,
+          reason: `位置距离 ${Math.round(bestDist)}m`,
+          distanceMeters: Math.round(bestDist)
+        };
+      }
+    }
+  } catch (e) {
+    Logger.error(TAG, `detectNearestHome error: ${e}`);
+  }
+  return null;
 }
 
 /** 是否为可开关电源的设备类型 */

@@ -16,18 +16,35 @@ export interface CloudDevice {
   localip: string;
   isOnline: boolean;
   specType: string;   // miot spec 类型，形如 urn:miot-spec-v2:device:table:...，用于识别设备类型
+  bssid?: string;     // 设备连接的路由器 BSSID（用于辅助家庭位置匹配）
+  latitude?: number;
+  longitude?: number;
+  orderTime?: number; // 米家设备绑定/排序时间戳
 }
 
 export interface CloudRoom {
   id: string;
   name: string;
   dids: string[];
+  bssid?: string;
 }
 
 export interface CloudHome {
   id: string;
   name: string;
   rooms: CloudRoom[];
+  dids?: string[];
+  latitude?: number;
+  longitude?: number;
+  bssid?: string;
+  address?: string;
+  uid?: number;
+}
+
+export interface HomeUnionOrder {
+  homeId: string;
+  frontOrder: string[];
+  roomOrders: Record<string, string[]>;
 }
 
 const ACCOUNT_BASE = 'https://account.xiaomi.com';
@@ -646,7 +663,11 @@ export async function getDevices(country: string = 'cn'): Promise<CloudDevice[]>
         model: String(d['model'] ?? ''),
         localip: String(d['localip'] ?? ''),
         isOnline: Boolean(d['isOnline'] ?? false),
-        specType: String(d['spec_type'] ?? '')
+        specType: String(d['spec_type'] ?? ''),
+        bssid: String(d['bssid'] ?? ''),
+        latitude: Number(d['latitude'] ?? 0),
+        longitude: Number(d['longitude'] ?? 0),
+        orderTime: Number(d['orderTime'] ?? 0)
       };
       devices.push(dev);
     }
@@ -671,11 +692,44 @@ export async function getDevices(country: string = 'cn'): Promise<CloudDevice[]>
  * 注：旧 rpc 对现代 miot-spec 设备会返回 "undefined command"/"user ack timeout"，控制请优先用 miotSetProp。
  */
 export async function rpcRemote(did: string, method: string,
-  params: (string | number | boolean)[]): Promise<Record<string, Object>> {
+  params: Object): Promise<Record<string, Object>> {
   const payload: Record<string, Object> = { 'method': method, 'params': params };
   const respData = await signedPost(`/home/rpc/${did}`, JSON.stringify(payload), 'cn');
   Logger.info(TAG, `rpcRemote ${did} ${method} code=${Number(respData['code'] ?? -1)}`);
   return respData;
+}
+
+const specStringCache: Map<string, string> = new Map<string, string>();
+
+/** 获取单台设备的原始 miot-spec instance JSON 字符串（供 RN 插件 Service.spec.getSpecString 使用） */
+export async function getSpecInstanceString(did: string): Promise<string> {
+  if (did === '') {
+    return '';
+  }
+  const hit = specStringCache.get(did);
+  if (hit !== undefined && hit !== '') {
+    return hit;
+  }
+  try {
+    const payload: Record<string, Object> = {
+      'dids': [did],
+      'urns': [''],
+      'isGetFullInstance': true
+    };
+    const respData = await signedPost('/appgateway/gspec/Gspec/get_instances_by_dids', JSON.stringify(payload), 'cn');
+    const instances = respData['instances'] as Record<string, Object> | undefined;
+    if (instances !== undefined && instances[did] !== undefined) {
+      const instObj = instances[did] as Record<string, Object>;
+      const str = String(instObj['instance'] ?? '');
+      if (str !== '') {
+        specStringCache.set(did, str);
+        return str;
+      }
+    }
+  } catch (e) {
+    Logger.error(TAG, `getSpecInstanceString(${did}) failed: ${e}`);
+  }
+  return '';
 }
 
 /** 透传米家云 API（插件 callSmartHomeAPI 用），data 为插件给的 JSON 字符串 */
@@ -700,6 +754,58 @@ export interface PluginPackageInfo {
  * 按型号查询米家 RN 插件包（与米家 App 相同的 /v2/plugin/fetch_plugin）。
  * 没有 RN 插件（download_url 为空）时返回 null。
  */
+// 标准插件（dev_mode=0）分类映射缓存：category -> stdModel（如 air-purifier / common -> miot.switch.spec）
+let stdModelHooks: Record<string, string> | null = null;
+let stdDefaultModel: string = 'miot.switch.spec';
+
+async function ensureStdModelHooks(): Promise<Record<string, string>> {
+  if (stdModelHooks !== null) {
+    return stdModelHooks;
+  }
+  const map: Record<string, string> = {};
+  try {
+    const req: Record<string, Object> = { 'app_platform': 'Android', 'api_version': 10117 };
+    const resp = await signedPost('/v2/plugin/category_standard_model', JSON.stringify(req), 'cn');
+    if (Number(resp['code'] ?? -1) === 0) {
+      const result = resp['result'] as Record<string, Object> | undefined;
+      if (result !== undefined) {
+        const defKey = String(result['default'] ?? 'common');
+        const hooks = result['hookmodel'] as Record<string, Object> | undefined;
+        if (hooks !== undefined) {
+          const keys = Object.keys(hooks);
+          for (let i = 0; i < keys.length; i++) {
+            const k = keys[i];
+            const hObj = hooks[k] as Record<string, Object>;
+            const sm = String(hObj['model'] ?? '');
+            if (sm !== '') {
+              map[k] = sm;
+            }
+          }
+          if (map[defKey] !== undefined) {
+            stdDefaultModel = map[defKey];
+          }
+        }
+      }
+    }
+  } catch (e) {
+    Logger.error(TAG, `ensureStdModelHooks failed: ${e}`);
+  }
+  stdModelHooks = map;
+  return map;
+}
+
+function pickStdModel(model: string, hooks: Record<string, string>): string {
+  const parts = model.split('.');
+  const cate = parts.length >= 2 ? parts[1].toLowerCase() : '';
+  if (cate !== '' && hooks[cate] !== undefined) {
+    return hooks[cate];
+  }
+  if (hooks['common'] !== undefined) {
+    return hooks['common'];
+  }
+  return stdDefaultModel;
+}
+
 export async function fetchPluginInfo(model: string): Promise<PluginPackageInfo | null> {
   const m: Map<string, PluginPackageInfo | null> = await fetchPluginInfos([model]);
   return m.get(model) ?? null;
@@ -736,17 +842,28 @@ export async function fetchPluginInfos(models: string[]): Promise<Map<string, Pl
     return out;
   }
   const arr: Object[] = list as Object[];
+  const stdFallbackModels: string[] = [];
   for (let i = 0; i < arr.length; i++) {
     const x = arr[i] as Record<string, Object>;
     const model: string = String(x['model'] ?? '');
     const url: string = String(x['download_url'] ?? '');
-    if (!out.has(model) || url.length === 0) {
+    const devMode: number = Number(x['dev_mode'] ?? -1);
+    const pkgId: number = Number(x['plugin_package_id'] ?? 0);
+    if (!out.has(model)) {
+      continue;
+    }
+    if (url.length === 0) {
+      // 逆向米家 11.8.705 StdCategoryHelper 确认：dev_mode=0 且有 plugin_package_id 但 download_url 为空的设备
+      // （如米家空气净化器 4 xiaomi.airp.mp4）使用米家通用标准插件（miot.switch.spec 等）+ 动态 spec/i18n 渲染
+      if (devMode === 0 && pkgId > 0 && !model.startsWith('miot.')) {
+        stdFallbackModels.push(model);
+      }
       continue;
     }
     const info: PluginPackageInfo = {
       model: model,
       pluginId: Number(x['plugin_id'] ?? 0),
-      packageId: Number(x['plugin_package_id'] ?? 0),
+      packageId: pkgId,
       version: Number(x['version'] ?? 0),
       sdkVersion: Number(x['sdk_version'] ?? 0),
       downloadUrl: url,
@@ -755,7 +872,124 @@ export async function fetchPluginInfos(models: string[]): Promise<Map<string, Pl
     };
     out.set(model, info);
   }
+  if (stdFallbackModels.length > 0) {
+    try {
+      const hooks = await ensureStdModelHooks();
+      const stdToModels: Record<string, string[]> = {};
+      const stdModels: string[] = [];
+      for (let i = 0; i < stdFallbackModels.length; i++) {
+        const origModel = stdFallbackModels[i];
+        const sm = pickStdModel(origModel, hooks);
+        if (stdToModels[sm] === undefined) {
+          stdToModels[sm] = [];
+          stdModels.push(sm);
+        }
+        stdToModels[sm].push(origModel);
+      }
+      const stdPlugins: Object[] = [];
+      for (let i = 0; i < stdModels.length; i++) {
+        stdPlugins.push({ 'model': stdModels[i], 'package_id': 0, 'type': '' } as Record<string, Object>);
+      }
+      const stdLatest: Record<string, Object> = {
+        'api_version': 10117, 'app_platform': 'android', 'region': 'cn', 'plugins': stdPlugins, 'package_type': ''
+      };
+      const stdBackup: Record<string, Object> = { 'plugins': stdPlugins, 'api_level': 111, 'app_platform': 'phone' };
+      const stdBody: Record<string, Object> = { 'is_car_mihome': false, 'latest_req': stdLatest, 'backup_req': stdBackup };
+      const stdResp = await signedPost('/v2/plugin/fetch_plugin', JSON.stringify(stdBody), 'cn');
+      if (Number(stdResp['code'] ?? -1) === 0) {
+        const stdRes = stdResp['result'] as Record<string, Object> | undefined;
+        const stdList = stdRes !== undefined ? stdRes['latest_info'] : undefined;
+        if (stdList instanceof Array) {
+          const sArr = stdList as Object[];
+          for (let j = 0; j < sArr.length; j++) {
+            const sx = sArr[j] as Record<string, Object>;
+            const sm = String(sx['model'] ?? '');
+            const surl = String(sx['download_url'] ?? '');
+            const targets = stdToModels[sm];
+            if (surl.length > 0 && targets !== undefined) {
+              for (let k = 0; k < targets.length; k++) {
+                const orig = targets[k];
+                const sInfo: PluginPackageInfo = {
+                  model: orig,
+                  pluginId: Number(sx['plugin_id'] ?? 0),
+                  packageId: Number(sx['plugin_package_id'] ?? 0),
+                  version: Number(sx['version'] ?? 0),
+                  sdkVersion: Number(sx['sdk_version'] ?? 0),
+                  downloadUrl: surl,
+                  md5: String(sx['md5sum'] ?? '').toLowerCase(),
+                  size: Number(sx['size'] ?? 0)
+                };
+                out.set(orig, sInfo);
+                Logger.info(TAG, `fetchPluginInfos: ${orig} mapped to std-plugin ${sm} (${sInfo.packageId} v${sInfo.version})`);
+              }
+            }
+          }
+        }
+      }
+    } catch (eStd) {
+      Logger.error(TAG, `std-plugin fallback failed: ${eStd}`);
+    }
+  }
   return out;
+}
+
+const stdResourceCache: Map<string, Record<string, Object>> = new Map<string, Record<string, Object>>();
+
+/**
+ * 为标准插件（miot.plugin.spec）拉取设备的动态 instance + 多语言 i18n 字典：
+ * - instance 来自 /appgateway/gspec/Gspec/get_instances_by_dids
+ * - i18n 来自 https://miot-spec.org/instance/v2/multiLanguage?urn=<type>
+ */
+export async function getStdPluginResource(did: string): Promise<Record<string, Object> | null> {
+  if (did === '') {
+    return null;
+  }
+  const cached = stdResourceCache.get(did);
+  if (cached !== undefined) {
+    return cached;
+  }
+  try {
+    const specStr = await getSpecInstanceString(did);
+    if (specStr === '') {
+      return null;
+    }
+    const instanceObj = JSON.parse(specStr) as Record<string, Object>;
+    const urn = String(instanceObj['type'] ?? '');
+    let i18nObj: Record<string, Object> = {};
+    if (urn !== '') {
+      const req = http.createHttp();
+      try {
+        const url = `https://miot-spec.org/instance/v2/multiLanguage?urn=${encodeURIComponent(urn)}`;
+        const resp = await req.request(url, {
+          method: http.RequestMethod.GET,
+          connectTimeout: 8000,
+          readTimeout: 8000,
+          expectDataType: http.HttpDataType.STRING
+        });
+        if (resp.responseCode === 200 && typeof resp.result === 'string') {
+          const parsed = JSON.parse(resp.result as string) as Record<string, Object>;
+          const data = parsed['data'] as Record<string, Object> | undefined;
+          if (data !== undefined && data !== null) {
+            i18nObj = data;
+          }
+        }
+      } catch (eI18n) {
+        Logger.error(TAG, `getStdPluginResource i18n failed: ${eI18n}`);
+      } finally {
+        req.destroy();
+      }
+    }
+    const resObj: Record<string, Object> = {
+      'instance': instanceObj,
+      'i18n': i18nObj,
+      'custom_config': {} as Record<string, Object>
+    };
+    stdResourceCache.set(did, resObj);
+    return resObj;
+  } catch (e) {
+    Logger.error(TAG, `getStdPluginResource(${did}) failed: ${e}`);
+    return null;
+  }
 }
 
 /**
@@ -1038,15 +1272,23 @@ export async function miotGetPropValues(did: string, siids: number[],
   return result;
 }
 
-/** 拉取真实家庭+房间结构（/v2/homeroom/gethome_merged，与 hass-xiaomi-miot 一致） */
-export async function getHomeList(country: string = 'cn'): Promise<CloudHome[]> {
+// 内存缓存家庭列表（短时间复用，避免 getHomes/getRooms/getDevices 连续三次重复请求 gethome_merged）
+let cachedHomeList: CloudHome[] = [];
+let cachedHomeListTs: number = 0;
+
+/** 拉取真实家庭+房间结构（/v2/homeroom/gethome_merged，含经纬度与房间设备排序 dids） */
+export async function getHomeList(country: string = 'cn', forceRefresh: boolean = false): Promise<CloudHome[]> {
+  const now = Date.now();
+  if (!forceRefresh && cachedHomeList.length > 0 && now - cachedHomeListTs < 15000) {
+    return cachedHomeList;
+  }
   const respData = await signedPost('/v2/homeroom/gethome_merged',
     '{"fg":true,"fetch_share":true,"fetch_share_dev":true,"fetch_cariot":true,"limit":300,"app_ver":7,"plat_form":0}', country);
   const gcode = Number(respData['code'] ?? -1);
   Logger.info(TAG, `getHomeList gethome_merged code=${gcode}`);
   if (gcode !== 0) {
     Logger.error(TAG, `gethome_merged failed, body=${JSON.stringify(respData).substring(0, 500)}`);
-    return [];
+    return cachedHomeList;
   }
   const result = respData['result'] as Record<string, Object>;
   const rawHomes = result['homelist'];
@@ -1068,19 +1310,179 @@ export async function getHomeList(country: string = 'cn'): Promise<CloudHome[]> 
       const room: CloudRoom = {
         id: String(r['id'] ?? ''),
         name: String(r['name'] ?? '未命名房间'),
-        dids: dids
+        dids: dids,
+        bssid: String(r['bssid'] ?? '')
       };
       rooms.push(room);
+    }
+    const homeDids: string[] = [];
+    const rawHomeDids = h['dids'];
+    const hdl: Object[] = (rawHomeDids instanceof Array) ? rawHomeDids as Object[] : [];
+    for (let m = 0; m < hdl.length; m++) {
+      homeDids.push(String(hdl[m]));
     }
     const home: CloudHome = {
       id: String(h['id'] ?? ''),
       name: String(h['name'] ?? '我的家'),
-      rooms: rooms
+      rooms: rooms,
+      dids: homeDids,
+      latitude: Number(h['latitude'] ?? 0),
+      longitude: Number(h['longitude'] ?? 0),
+      bssid: String(h['bssid'] ?? ''),
+      address: String(h['address'] ?? ''),
+      uid: Number(h['uid'] ?? 0)
     };
     homes.push(home);
   }
+  cachedHomeList = homes;
+  cachedHomeListTs = Date.now();
   Logger.info(TAG, `getHomeList returned ${homes.length} homes`);
   return homes;
+}
+
+/**
+ * 逆向米家 11.8.705 DeviceOrderSourceUnionBase 确认：
+ * POST /v2/home/get_union_order 获取用户在米家 App 设置的首页/房间设备自定义排序
+ * （front_order_v2 / front_order / room_order_v2 / room_order）。
+ */
+export async function getUnionOrders(homes: CloudHome[], country: string = 'cn'): Promise<Record<string, HomeUnionOrder>> {
+  const out: Record<string, HomeUnionOrder> = {};
+  if (homes.length === 0) {
+    return out;
+  }
+  const homeIds: number[] = [];
+  let ownerUid: number = Number(userId);
+  for (let i = 0; i < homes.length; i++) {
+    const hidNum = Number(homes[i].id);
+    if (!isNaN(hidNum) && hidNum > 0) {
+      homeIds.push(hidNum);
+    }
+    if ((homes[i].uid ?? 0) > 0) {
+      ownerUid = homes[i].uid ?? ownerUid;
+    }
+  }
+  if (homeIds.length === 0) {
+    return out;
+  }
+  const reqObj: Record<string, Object> = {
+    'home_id': homeIds,
+    'owner_uid': ownerUid,
+    'platform': 'android',
+    'get_front_order': true,
+    'get_front_order_v2': true,
+    'get_room_order': true,
+    'get_room_order_v2': true
+  };
+  try {
+    const resp = await signedPost('/v2/home/get_union_order', JSON.stringify(reqObj), country);
+    if (Number(resp['code'] ?? -1) !== 0) {
+      return out;
+    }
+    const result = resp['result'] as Record<string, Object> | undefined;
+    const rawInfo = result !== undefined ? result['info'] : undefined;
+    const infoList: Object[] = (rawInfo instanceof Array) ? rawInfo as Object[] : [];
+    for (let i = 0; i < infoList.length; i++) {
+      const item = infoList[i] as Record<string, Object>;
+      const hid = String(item['home_id'] ?? '');
+      if (hid === '') {
+        continue;
+      }
+      const front: string[] = [];
+      const f2 = item['front_order_v2'];
+      const f1 = item['front_order'];
+      const pickF: Object[] = (f2 instanceof Array && (f2 as Object[]).length > 0 && String((f2 as Object[])[0]) !== '-')
+        ? (f2 as Object[])
+        : ((f1 instanceof Array) ? (f1 as Object[]) : []);
+      for (let k = 0; k < pickF.length; k++) {
+        const s = String(pickF[k] ?? '');
+        if (s !== '' && s !== '-') {
+          front.push(s);
+        }
+      }
+      const roomOrders: Record<string, string[]> = {};
+      const r1 = item['room_order'];
+      const r2 = item['room_order_v2'];
+      const rLists: Object[][] = [];
+      if (r1 instanceof Array) {
+        rLists.push(r1 as Object[]);
+      }
+      if (r2 instanceof Array) {
+        rLists.push(r2 as Object[]);
+      }
+      for (let a = 0; a < rLists.length; a++) {
+        const rl = rLists[a];
+        for (let b = 0; b < rl.length; b++) {
+          const ro = rl[b] as Record<string, Object>;
+          const rid = String(ro['room_id'] ?? '');
+          const rawDo = ro['did_order'];
+          if (rid !== '' && rawDo instanceof Array) {
+            const arr = rawDo as Object[];
+            const dids: string[] = [];
+            for (let c = 0; c < arr.length; c++) {
+              const ds = String(arr[c] ?? '');
+              if (ds !== '' && ds !== '-') {
+                dids.push(ds);
+              }
+            }
+            if (dids.length > 0) {
+              roomOrders[rid] = dids;
+            }
+          }
+        }
+      }
+      out[hid] = {
+        homeId: hid,
+        frontOrder: front,
+        roomOrders: roomOrders
+      };
+    }
+  } catch (e) {
+    Logger.error(TAG, `getUnionOrders failed: ${e}`);
+  }
+  return out;
+}
+
+/**
+ * 逆向米家 11.8.705 ControlCardInfoManager 确认：
+ * POST /v2/productconfig/single_pull，data={"models":[...],"keys":["icon_real","name"]}
+ * 返回每个型号的真实产品高清透明 PNG 图标 URL（icon_real）。
+ */
+export async function getProductIcons(models: string[], country: string = 'cn'): Promise<Record<string, string>> {
+  const icons: Record<string, string> = {};
+  const unique: string[] = [];
+  for (let i = 0; i < models.length; i++) {
+    const m = models[i];
+    if (m !== '' && unique.indexOf(m) < 0) {
+      unique.push(m);
+    }
+  }
+  if (unique.length === 0) {
+    return icons;
+  }
+  try {
+    const reqObj: Record<string, Object> = {
+      'models': unique,
+      'keys': ['icon_real', 'name']
+    };
+    const resp = await signedPost('/v2/productconfig/single_pull', JSON.stringify(reqObj), country);
+    if (Number(resp['code'] ?? -1) !== 0) {
+      return icons;
+    }
+    const rawRes = resp['result'];
+    const list: Object[] = (rawRes instanceof Array) ? rawRes as Object[] : [];
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i] as Record<string, Object>;
+      const model = String(item['model'] ?? '');
+      const iconUrl = String(item['icon_real'] ?? '');
+      if (model !== '' && iconUrl.startsWith('http')) {
+        icons[model] = iconUrl;
+      }
+    }
+    Logger.info(TAG, `getProductIcons fetched ${Object.keys(icons).length}/${unique.length} icons`);
+  } catch (e) {
+    Logger.error(TAG, `getProductIcons failed: ${e}`);
+  }
+  return icons;
 }
 
 /**

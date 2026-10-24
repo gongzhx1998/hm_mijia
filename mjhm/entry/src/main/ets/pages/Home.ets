@@ -30,6 +30,8 @@ struct HomePage {
   @State errorMsg: string = '';
   @State showRoomSheet: boolean = false;
   @State showHomeSheet: boolean = false;
+  @State locationTag: string = '';
+  private manualHomeSwitched: boolean = false;
 
   async aboutToAppear(): Promise<void> {
     const token = await Storage.getString(AppConfig.KEY_TOKEN, '');
@@ -68,20 +70,64 @@ struct HomePage {
     try {
       this.homes = await ApiService.getHomes();
       if (this.homes.length > 0) {
-        this.homeName = this.homes[0].name;
-        this.homeId = this.homes[0].homeId;
+        const savedHomeId = await Storage.getString(AppConfig.KEY_CURRENT_HOME, '');
+        let chosen: Home = this.homes[0];
+        if (savedHomeId !== '') {
+          for (let i = 0; i < this.homes.length; i++) {
+            if (this.homes[i].homeId === savedHomeId) {
+              chosen = this.homes[i];
+              break;
+            }
+          }
+        }
+        this.homeName = chosen.name;
+        this.homeId = chosen.homeId;
         this.rooms = await ApiService.getRooms(this.homeId);
       }
       this.devices = await ApiService.getDevices(this.homeId);
       // 批量读取可开关设备的电源状态，让开关按钮显示真实状态
       await ApiService.readPowerStates(this.devices);
-      Logger.info(TAG, `loadData done: homes=${this.homes.length} rooms=${this.rooms.length} devices=${this.devices.length}`);
+      Logger.info(TAG, `loadData done: home=${this.homeName}(${this.homeId}) homes=${this.homes.length} rooms=${this.rooms.length} devices=${this.devices.length}`);
       this.startPluginPrefetch();
+      // 异步执行基于位置的家庭自动切换（不阻塞首屏渲染）
+      this.autoSwitchHomeByLocation();
     } catch (e) {
       Logger.error(TAG, `loadData failed: ${e}`);
       this.errorMsg = '同步失败，请检查网络后下拉重试';
     } finally {
       this.loading = false;
+    }
+  }
+
+  /** 请求位置权限并根据当前位置 / Wi-Fi 自动切换到所在家庭 */
+  private async autoSwitchHomeByLocation(): Promise<void> {
+    if (this.manualHomeSwitched || this.homes.length <= 1) {
+      return;
+    }
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const detected = await ApiService.detectNearestHome(ctx);
+      if (detected === null) {
+        Logger.info(TAG, 'autoSwitchHomeByLocation: no location/wifi match');
+        return;
+      }
+      this.locationTag = detected.reason;
+      Logger.info(TAG, `autoSwitchHomeByLocation matched home=${detected.homeName}(${detected.homeId}) reason=${detected.reason}`);
+      if (this.manualHomeSwitched) {
+        return;
+      }
+      if (detected.homeId !== this.homeId) {
+        for (let i = 0; i < this.homes.length; i++) {
+          if (this.homes[i].homeId === detected.homeId) {
+            await this.applyHomeSelection(this.homes[i], false);
+            break;
+          }
+        }
+      } else {
+        await Storage.saveString(AppConfig.KEY_CURRENT_HOME, detected.homeId);
+      }
+    } catch (e) {
+      Logger.error(TAG, `autoSwitchHomeByLocation error: ${e}`);
     }
   }
 
@@ -106,21 +152,29 @@ struct HomePage {
   /** 切换家庭：更新 homeId/homeName，重新拉取该家庭的房间和设备 */
   async switchHome(home: Home): Promise<void> {
     this.showHomeSheet = false;
-    if (home.homeId === this.homeId) {
+    this.manualHomeSwitched = true;
+    await this.applyHomeSelection(home, true);
+  }
+
+  private async applyHomeSelection(home: Home, reloadCloud: boolean): Promise<void> {
+    if (home.homeId === this.homeId && this.devices.length > 0) {
       return;
     }
     this.homeId = home.homeId;
     this.homeName = home.name;
     this.currentRoom = '';
+    await Storage.saveString(AppConfig.KEY_CURRENT_HOME, home.homeId);
     this.loading = true;
     this.errorMsg = '';
     try {
       this.rooms = await ApiService.getRooms(home.homeId);
-      this.devices = await ApiService.reloadDevicesForHome(home.homeId);
+      this.devices = reloadCloud
+        ? await ApiService.reloadDevicesForHome(home.homeId)
+        : await ApiService.getDevices(home.homeId);
       await ApiService.readPowerStates(this.devices);
-      Logger.info(TAG, `switchHome done: ${home.name} rooms=${this.rooms.length} devices=${this.devices.length}`);
+      Logger.info(TAG, `applyHomeSelection done: ${home.name} rooms=${this.rooms.length} devices=${this.devices.length}`);
     } catch (e) {
-      Logger.error(TAG, `switchHome failed: ${e}`);
+      Logger.error(TAG, `applyHomeSelection failed: ${e}`);
       this.errorMsg = '切换家庭失败，请重试';
     } finally {
       this.loading = false;
@@ -490,16 +544,25 @@ struct HomePage {
           })
         Row() {
           Column() {
-            // 顶部：定位图标 + 当前家庭名
+            // 顶部：定位图标 + 当前家庭名（显示自动定位匹配依据）
             Row() {
               Text('📍')
                 .fontSize(20)
-              Text(this.homeName)
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontColor('#1A1A1A')
-                .margin({ left: 12 })
-                .layoutWeight(1)
+              Column() {
+                Text(this.homeName)
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1A1A1A')
+                if (this.locationTag !== '') {
+                  Text(`自动定位：${this.locationTag}`)
+                    .fontSize(12)
+                    .fontColor('#888888')
+                    .margin({ top: 2 })
+                }
+              }
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+              .layoutWeight(1)
             }
             .width('100%')
             .padding({ left: 20, right: 20, top: 20, bottom: 20 })
@@ -617,15 +680,22 @@ struct HomePage {
   DeviceCard(device: Device) {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
-        // 图标块
+        // 图标块（优先展示米家云真实产品 PNG 图标，无 URL 时回退类型图标）
         Row() {
-          Text(this.deviceIcon(device.type))
-            .fontSize(30)
+          if (device.iconUrl !== undefined && device.iconUrl !== '') {
+            Image(device.iconUrl)
+              .width(48)
+              .height(48)
+              .objectFit(ImageFit.Contain)
+          } else {
+            Text(this.deviceIcon(device.type))
+              .fontSize(30)
+          }
         }
         .width(56)
         .height(56)
         .borderRadius(12)
-        .backgroundColor('#33FFFFFF')
+        .backgroundColor('#22FFFFFF')
         .justifyContent(FlexAlign.Center)
 
         Blank()

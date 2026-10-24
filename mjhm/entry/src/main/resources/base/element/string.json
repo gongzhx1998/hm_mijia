@@ -18,7 +18,7 @@
     },
     {
       "name": "location_reason",
-      "value": "用于配网时获取附近的 Wi-Fi 网络信息"
+      "value": "用于根据当前位置自动切换所在家庭及获取附近的 Wi-Fi 网络信息"
     },
     {
       "name": "background_reason",
