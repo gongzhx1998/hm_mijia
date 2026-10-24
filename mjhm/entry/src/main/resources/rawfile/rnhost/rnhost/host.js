@@ -707,6 +707,14 @@
 
     var styleMerged = collectStyleFromProps(props);
     applyStyle(el, styleMerged);
+    if (el._rnScroll) {
+      if ('scrollEnabled' in props) el._rnScrollEnabled = props.scrollEnabled !== false;
+      fixScrollOverflow(el, props);
+      if ('showsVerticalScrollIndicator' in props || 'showsHorizontalScrollIndicator' in props) {
+        var hide = el._rnScroll === 'x' ? props.showsHorizontalScrollIndicator === false : props.showsVerticalScrollIndicator === false;
+        el.classList.toggle('rn-noscrollbar', !!hide);
+      }
+    }
 
     Object.keys(props).forEach(function (k) {
       if (k === 'style' || STYLE_KEYS[k]) return;
@@ -880,6 +888,7 @@
     var st = doc.createElement('style');
     st.id = 'rn-native-css';
     st.textContent =
+      '.rn-noscrollbar{scrollbar-width:none;}.rn-noscrollbar::-webkit-scrollbar{display:none;}' +
       'input.rn-slider{-webkit-appearance:none;appearance:none;background:transparent;width:100%;touch-action:none;}' +
       'input.rn-slider::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--rn-track,#ddd);}' +
       'input.rn-slider::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;margin-top:-9px;border-radius:50%;' +
@@ -943,11 +952,15 @@
         break;
       case 'RCTScrollView':
       case 'AndroidHorizontalScrollView':
+        // 与 Yoga 一致：flex 由 RN 的 baseVertical/baseHorizontal 样式给（flexGrow/flexShrink:1，basis auto），
+        // 不再写死 flex:1 1 0%（父容器高度不定时会被压成 0 高、无法滚动）
         el = doc.createElement('div');
-        el.style.overflow = 'auto';
-        el.style.flex = '1 1 0%';
+        el._rnScroll = className === 'AndroidHorizontalScrollView' ? 'x' : 'y';
+        el.className = 'rn-scroll';
         el.style.WebkitOverflowScrolling = 'touch';
         el.style.minHeight = '0';
+        el.style.minWidth = '0';
+        fixScrollOverflow(el);
         break;
       case 'AndroidHorizontalScrollContentView':
         el = doc.createElement('div');
@@ -1381,7 +1394,6 @@
   }
 
   var _touchId = 1;
-  var _activeTouch = null;
 
   function makeTouch(tag, x, y, identifier) {
     var o = rootOrigin();
@@ -1399,81 +1411,196 @@
     };
   }
 
+  // ---------- 触摸 / 滚动 ----------
+  // 与 RN Android 一致：
+  //  * 默认不拦截浏览器手势，ScrollView 原生（带惯性）滚动；一旦滚动开始，给 JS 发 topTouchCancel，
+  //    这样按钮不会因为滑动而被点中（对应 Android 的 onChildStartedNativeGesture）。
+  //  * JS 响应者通过 UIManager.setJSResponder(tag, blockNativeResponder=true) 声明独占（PanResponder、滑杆等）时，
+  //    touchmove 上 preventDefault，阻止原生滚动，JS 收到完整的 move。
+  //  * 滚动容器的 scroll 事件按帧节流回传 topScroll（contentOffset/contentSize/layoutMeasurement），
+  //    VirtualizedList/FlatList 靠它继续渲染后面的行；另发 Begin/EndDrag、Momentum Begin/End。
+  var _activeTouch = null;
+  HOST._jsResponder = { tag: null, block: false };
+  HOST.scrollStats = {}; // 调试计数：各类滚动事件发送次数
+
+  function touchPoint(ev) {
+    var t = ev.changedTouches && ev.changedTouches[0];
+    if (t) return { x: t.clientX, y: t.clientY, id: t.identifier };
+    return { x: ev.clientX, y: ev.clientY, id: -1 };
+  }
+
+  function findTouch(ev, id) {
+    var l = ev.changedTouches;
+    if (!l) return touchPoint(ev);
+    for (var i = 0; i < l.length; i++) if (l[i].identifier === id) return { x: l[i].clientX, y: l[i].clientY, id: id };
+    return null;
+  }
+
+  function scrollRecOf(el) {
+    while (el && el !== doc.body) {
+      if (el._rnScroll) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function fixScrollOverflow(el, props) {
+    // RN Android 的 ScrollView 不受 style.overflow 影响（overflow 只决定裁剪），scrollEnabled=false 才禁止滚动
+    var enabled = !(props && props.scrollEnabled === false) && el._rnScrollEnabled !== false;
+    if (el._rnScroll === 'x') {
+      el.style.overflowX = enabled ? 'auto' : 'hidden';
+      el.style.overflowY = 'hidden';
+    } else {
+      el.style.overflowY = enabled ? 'auto' : 'hidden';
+      el.style.overflowX = 'hidden';
+    }
+    el.style.overscrollBehavior = 'contain';
+  }
+
+  function scrollPayload(el, tag) {
+    return {
+      contentOffset: { x: el.scrollLeft, y: el.scrollTop },
+      contentSize: { width: el.scrollWidth, height: el.scrollHeight },
+      layoutMeasurement: { width: el.clientWidth, height: el.clientHeight },
+      contentInset: { top: 0, left: 0, bottom: 0, right: 0 },
+      zoomScale: 1,
+      velocity: { x: 0, y: 0 },
+      responderIgnoreScroll: true,
+      target: tag
+    };
+  }
+
+  function emitScroll(el, name) {
+    var t = el.getAttribute && el.getAttribute('data-tag');
+    if (!t) return;
+    emitEvent(Number(t), name, scrollPayload(el, Number(t)));
+    HOST.scrollStats[name] = (HOST.scrollStats[name] || 0) + 1;
+  }
+
+  function onAnyScroll(ev) {
+    var el = ev.target;
+    if (!el || !el._rnScroll) return;
+    // 正在拖动的触摸点在这个滚动容器里 → 原生滚动接管，取消 JS 触摸
+    var T = _activeTouch;
+    if (T && !T.canceled && !HOST._jsResponder.block) {
+      var tel = tagEl(T.tag);
+      if (tel && el.contains(tel)) {
+        T.canceled = true;
+        T.dragEl = el;
+        receiveTouches('topTouchCancel', [makeTouch(T.tag, T.lastX, T.lastY, T.id)], [0]);
+        emitScroll(el, 'topScrollBeginDrag');
+      }
+    }
+    if (!el._rnScrollActive) {
+      el._rnScrollActive = true;
+      if (!(T && T.dragEl === el)) {
+        el._rnMomentum = true;
+        emitScroll(el, 'topMomentumScrollBegin');
+      }
+    }
+    if (!el._rnScrollRaf) {
+      el._rnScrollRaf = true;
+      var raf = (typeof requestAnimationFrame === 'function' && HOST.nativeRaf) ? HOST.nativeRaf : function (f) { return _nST(f, 16); };
+      raf(function () {
+        el._rnScrollRaf = false;
+        emitScroll(el, 'topScroll');
+      });
+    }
+    if (el._rnScrollIdle) _nCT(el._rnScrollIdle);
+    el._rnScrollIdle = _nST(function () {
+      el._rnScrollIdle = null;
+      if (_activeTouch && _activeTouch.dragEl === el) return; // 手指还在
+      el._rnScrollActive = false;
+      emitScroll(el, 'topScroll');
+      if (el._rnMomentum) {
+        el._rnMomentum = false;
+        emitScroll(el, 'topMomentumScrollEnd');
+      }
+    }, 140);
+  }
+
+  function touchStart(ev) {
+    var tgt = ev.target;
+    if (tgt && tgt.tagName === 'INPUT') return; // 原生滑杆/开关自行处理
+    if (_activeTouch && ev.touches && ev.touches.length > 1) return; // 只跟踪第一根手指（单指时旧记录视为丢失的 end）
+    var p = touchPoint(ev);
+    var tag = hitTagFromPoint(p.x, p.y);
+    if (tag == null) return;
+    var id = _touchId++;
+    _activeTouch = { id: id, tag: tag, tid: p.id, x0: p.x, y0: p.y, lastX: p.x, lastY: p.y, canceled: false, dragEl: null };
+    HOST._jsResponder = { tag: null, block: false };
+    // 手指按住正在惯性滚动的列表：停下，且这次触摸不当作点击（Android 行为）
+    var sc = scrollRecOf(tgt);
+    if (sc && sc._rnMomentum) {
+      sc.scrollTo({ left: sc.scrollLeft, top: sc.scrollTop, behavior: 'auto' });
+    }
+    receiveTouches('topTouchStart', [makeTouch(tag, p.x, p.y, id)], [0]);
+  }
+
+  function touchMove(ev) {
+    var T = _activeTouch;
+    if (!T) return;
+    var p = ev.type === 'mousemove' ? touchPoint(ev) : findTouch(ev, T.tid);
+    if (!p) return;
+    T.lastX = p.x; T.lastY = p.y;
+    if (T.canceled) return;
+    receiveTouches('topTouchMove', [makeTouch(T.tag, p.x, p.y, T.id)], [0]);
+    // JS 响应者要求独占（PanResponder 默认如此）→ 阻止原生滚动
+    if (HOST._jsResponder.block && ev.cancelable) {
+      try { ev.preventDefault(); } catch (_e) {}
+    }
+  }
+
+  function touchEnd(ev, cancel) {
+    var T = _activeTouch;
+    if (!T) return;
+    var p = ev.type && ev.type.indexOf('mouse') === 0 ? touchPoint(ev) : findTouch(ev, T.tid);
+    if (!p) return;
+    _activeTouch = null;
+    if (!T.canceled) {
+      receiveTouches(cancel ? 'topTouchCancel' : 'topTouchEnd', [makeTouch(T.tag, p.x, p.y, T.id)], [0]);
+    }
+    if (T.dragEl) {
+      var el = T.dragEl;
+      emitScroll(el, 'topScrollEndDrag');
+      // 松手后可能还有惯性滚动：没有后续 scroll 就直接结束
+      el._rnMomentum = true;
+      emitScroll(el, 'topMomentumScrollBegin');
+      if (el._rnScrollIdle) _nCT(el._rnScrollIdle);
+      el._rnScrollIdle = _nST(function () {
+        el._rnScrollIdle = null;
+        el._rnScrollActive = false;
+        el._rnMomentum = false;
+        emitScroll(el, 'topScroll');
+        emitScroll(el, 'topMomentumScrollEnd');
+      }, 160);
+    }
+    HOST._jsResponder = { tag: null, block: false };
+    HOST._lastTouchEndAt = Date.now();
+  }
+
+  function installGlobalTouch() {
+    if (!doc || HOST._touchInstalled) return;
+    HOST._touchInstalled = true;
+    var opt = { passive: false, capture: true };
+    doc.addEventListener('touchstart', touchStart, opt);
+    doc.addEventListener('touchmove', touchMove, opt);
+    doc.addEventListener('touchend', function (ev) { touchEnd(ev, false); }, opt);
+    doc.addEventListener('touchcancel', function (ev) { touchEnd(ev, true); }, opt);
+    doc.addEventListener('scroll', onAnyScroll, { passive: true, capture: true });
+    // 桌面 / CDP 鼠标回退（没有原生滚动，拖动就是 JS move）
+    var mouseDown = false;
+    doc.addEventListener('mousedown', function (ev) {
+      if (HOST._lastTouchEndAt && Date.now() - HOST._lastTouchEndAt < 800) return; // 触摸后的兼容鼠标事件
+      if (_activeTouch) return;
+      mouseDown = true; touchStart(ev);
+    }, true);
+    doc.addEventListener('mousemove', function (ev) { if (mouseDown) touchMove(ev); }, true);
+    doc.addEventListener('mouseup', function (ev) { if (mouseDown) { mouseDown = false; touchEnd(ev, false); } }, true);
+  }
+
   function wireTouches(rec) {
-    var el = rec && rec.el;
-    if (!el || el.__rnTouchWired) return;
-    el.__rnTouchWired = true;
-    // Only wire interactive-ish nodes; bubbling from children still hits parents via elementFromPoint
-    var start = function (ev) {
-      if (ev.__rnSeen) return;
-      ev.__rnSeen = true;
-      var tgt = ev.target;
-      if (tgt && tgt.tagName === 'INPUT') return; // native slider/switch handle their own gestures
-      try {
-        if (ev.cancelable) ev.preventDefault();
-      } catch (_e) {}
-      var x, y;
-      if (ev.changedTouches && ev.changedTouches[0]) {
-        x = ev.changedTouches[0].clientX; y = ev.changedTouches[0].clientY;
-      } else {
-        x = ev.clientX; y = ev.clientY;
-      }
-      var tag = hitTagFromPoint(x, y);
-      if (tag == null) tag = rec.tag;
-      var id = _touchId++;
-      _activeTouch = { id: id, tag: tag };
-      var touch = makeTouch(tag, x, y, id);
-      receiveTouches('topTouchStart', [touch], [0]);
-    };
-    var move = function (ev) {
-      if (ev.__rnSeen) return;
-      ev.__rnSeen = true;
-      if (!_activeTouch) return;
-      var x, y;
-      if (ev.changedTouches && ev.changedTouches[0]) {
-        x = ev.changedTouches[0].clientX; y = ev.changedTouches[0].clientY;
-      } else {
-        x = ev.clientX; y = ev.clientY;
-      }
-      var touch = makeTouch(_activeTouch.tag, x, y, _activeTouch.id);
-      receiveTouches('topTouchMove', [touch], [0]);
-    };
-    var end = function (ev) {
-      if (ev.__rnSeen) return;
-      ev.__rnSeen = true;
-      if (!_activeTouch) return;
-      var x, y;
-      if (ev.changedTouches && ev.changedTouches[0]) {
-        x = ev.changedTouches[0].clientX; y = ev.changedTouches[0].clientY;
-      } else {
-        x = ev.clientX; y = ev.clientY;
-      }
-      var touch = makeTouch(_activeTouch.tag, x, y, _activeTouch.id);
-      receiveTouches('topTouchEnd', [touch], [0]);
-      _activeTouch = null;
-      HOST._lastTouchEndAt = Date.now();
-    };
-    el.addEventListener('touchstart', start, { passive: false });
-    el.addEventListener('touchmove', move, { passive: false });
-    el.addEventListener('touchend', end, { passive: false });
-    el.addEventListener('touchcancel', end, { passive: false });
-    // Desktop / CDP mouse fallback
-    el.addEventListener('mousedown', start);
-    el.addEventListener('mousemove', function (ev) { if (_activeTouch) move(ev); });
-    el.addEventListener('mouseup', end);
-    el.addEventListener('click', function (ev) {
-      // Some CDP paths only fire click; synthesize press if no prior touch
-      if (ev.__rnClickSeen) return;
-      ev.__rnClickSeen = true;
-      if (_activeTouch || (ev.target && ev.target.tagName === 'INPUT')) return;
-      if (HOST._lastTouchEndAt && Date.now() - HOST._lastTouchEndAt < 600) return;
-      var x = ev.clientX, y = ev.clientY;
-      var tag = hitTagFromPoint(x, y);
-      if (tag == null) tag = rec.tag;
-      var id = _touchId++;
-      receiveTouches('topTouchStart', [makeTouch(tag, x, y, id)], [0]);
-      receiveTouches('topTouchEnd', [makeTouch(tag, x, y, id)], [0]);
-    });
+    installGlobalTouch();
   }
 
   function uiCreateView(tag, className, rootTag, props) {
@@ -1608,6 +1735,29 @@
     return cfg;
   }
 
+  var COMMAND_NAMES = {};
+  Object.keys(COMMON_VIEW_COMMANDS).forEach(function (n) { COMMAND_NAMES[COMMON_VIEW_COMMANDS[n]] = n; });
+  function dispatchViewCommand(tag, cmd, args) {
+    var rec = HOST.views[tag];
+    var el = rec && rec.el;
+    if (!el) return;
+    var name = typeof cmd === 'string' ? cmd : COMMAND_NAMES[cmd];
+    args = args || [];
+    try {
+      if (el._rnScroll) {
+        if (name === 'scrollTo') {
+          el.scrollTo({ left: Number(args[0]) || 0, top: Number(args[1]) || 0, behavior: args[2] === false ? 'auto' : 'smooth' });
+        } else if (name === 'scrollToEnd') {
+          el.scrollTo({ left: el._rnScroll === 'x' ? el.scrollWidth : el.scrollLeft, top: el._rnScroll === 'x' ? el.scrollTop : el.scrollHeight,
+            behavior: args[0] === false ? 'auto' : 'smooth' });
+        }
+        return;
+      }
+    } catch (e) {
+      log('view command error', name, String(e && e.message || e));
+    }
+  }
+
   // Build module table
   var uic = mergeSvgAttrs(buildUIManagerConstants());
   Object.keys(uic).forEach(function (k) { withCommands(uic[k]); });
@@ -1683,9 +1833,9 @@
       var m = measureTag(tag);
       if (typeof succ === 'function') succ(m[0], m[1], m[2], m[3]);
     },
-    setJSResponder: function () {},
-    clearJSResponder: function () {},
-    dispatchViewManagerCommand: function () {},
+    setJSResponder: function (tag, block) { HOST._jsResponder = { tag: tag, block: !!block }; },
+    clearJSResponder: function () { HOST._jsResponder = { tag: null, block: false }; },
+    dispatchViewManagerCommand: dispatchViewCommand,
     setLayoutAnimationEnabledExperimental: function () {},
     configureNextLayoutAnimation: function (c, sb, eb) { if (typeof sb === 'function') sb(); },
     removeSubviewsFromContainerWithID: function (tag) {

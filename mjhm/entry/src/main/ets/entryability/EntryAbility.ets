@@ -4,6 +4,7 @@ import { window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { setStatusBar } from '../common/AppConfig';
 import { ensureRnHostCache } from '../service/RnHostWarm';
+import { ensureWarmWeb } from '../service/RnWebPool';
 
 const DOMAIN = 0x0000;
 
@@ -36,6 +37,23 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'EntryAbility', 'Succeeded in loading content');
+      // 缓存就绪后创建离线暖机 Web（index?warm=1 + sdk 预执行）
+      const ctx: common.UIAbilityContext = this.context;
+      const ui = windowStage.getMainWindowSync().getUIContext();
+      let sbVp: number = 0;
+      try {
+        const win = windowStage.getMainWindowSync();
+        const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+        sbVp = Math.round(ui.px2vp(area.topRect.height) * 100) / 100;
+      } catch (_e) {
+      }
+      ensureRnHostCache(ctx).then((dir: string) => {
+        ensureWarmWeb(ui, dir, sbVp);
+        hilog.info(DOMAIN, 'EntryAbility', 'PERF ensureWarmWeb scheduled dir=%{public}s sb=%{public}s', dir,
+          String(sbVp));
+      }).catch((e: Object) => {
+        hilog.error(DOMAIN, 'EntryAbility', 'ensureWarmWeb %{public}s', String(e));
+      });
     });
     setStatusBar('#F5F6F7', false);
   }

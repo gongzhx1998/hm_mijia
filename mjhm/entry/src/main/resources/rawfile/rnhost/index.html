@@ -19,7 +19,7 @@
 </head>
 <body>
   <div id="rn-banner">米家原版插件（实验）— 若只有本条橙色，说明 HTML 已加载</div>
-  <div id="rn-root"><div id="rn-placeholder" style="padding:20px;color:#666;font-size:14px">等待宿主脚本 / ArkTS 注入…</div></div>
+  <div id="rn-root"><div id="rn-placeholder" style="display:none"></div></div>
   <div id="rn-log-wrap" class="collapsed">
     <div id="rn-log-bar">日志 ▸ 点击展开/收起</div>
     <pre id="rn-log">[inline] html parsed
@@ -68,6 +68,16 @@
         append('UNHANDLED ' + (ev.reason && (ev.reason.stack || ev.reason)));
       });
       append('loc=' + location.href);
+      try {
+        if (location.origin && location.origin.indexOf('rnhost.local') >= 0) {
+          window.__bundleUrls = {
+            sdk: location.origin + '/sdk/sdk.bundle',
+            host: location.origin + '/rnhost/host.js',
+            boot: location.origin + '/rnhost/boot.js'
+          };
+          append('bundleUrls https origin');
+        }
+      } catch (_bu) {}
       append('UA=' + (navigator.userAgent || ''));
 
       function param(name) {
@@ -75,8 +85,9 @@
         return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
       }
 
+      var HostPromise = window.Promise;
       function loadScript(src) {
-        return new Promise(function (resolve, reject) {
+        return new HostPromise(function (resolve, reject) {
           var s = document.createElement('script');
           s.src = src;
           s.onload = function () { append('script ok ' + src); resolve(); };
@@ -132,6 +143,16 @@
           var resReady = pl.resFilesJs ? loadScript(pl.resFilesJs).catch(function () { append('plugin files.js missing'); }) : Promise.resolve();
           resReady.then(function () {
           window.__clearRnPlaceholder();
+          try {
+            if (window.__sdkWarmed || pl.skipSdk) {
+              var nt = window.__RNHost && window.__RNHost.nativeTimers;
+              if (nt && window.__RNHost._pumpId == null) {
+                window.__RNHost._pumpId = nt.setInterval(function () {
+                  try { window.__RNHost.pollQueue(); } catch (_p) {}
+                }, 8);
+              }
+            }
+          } catch (_pump) {}
           return window.__RNHost.loadAndRun({
             sdkUrl: sdkUrl,
             pluginUrl: pluginUrl,
@@ -139,7 +160,8 @@
             entries: pl.entries,
             plugin: pl,
             device: device,
-            rootTag: 11
+            rootTag: 11,
+            skipSdk: !!(window.__sdkWarmed || pl.skipSdk)
           });
           }).then(function (snap) {
             append('boot ok, views=' + (snap && snap.length));
@@ -159,16 +181,37 @@
       };
 
       append('loading res/files.js + host.js / boot.js …');
+      var bu = window.__bundleUrls || {};
       loadScript('plugin/res/files.js').catch(function () { append('files.js missing (images may 404)'); })
-        .then(function () { return loadScript('rnhost/host.js'); })
-        .then(function () { return loadScript('rnhost/boot.js'); })
+        .then(function () { return loadScript(bu.host || 'rnhost/host.js'); })
+        .then(function () { return loadScript(bu.boot || 'rnhost/boot.js'); })
         .then(function () {
           append('host+boot ready; waiting ArkTS kick or auto-start');
+          var warm = param('warm') === '1' || window.__warmMode === true;
+          if (warm) {
+            window.__warmMode = true;
+            append('WARM mode: loading sdk only');
+            if (!window.__RNHost || !window.__RNHost.warmSdk) {
+              append('FATAL: warmSdk missing');
+              return;
+            }
+            return window.__RNHost.warmSdk((window.__bundleUrls && window.__bundleUrls.sdk) || 'sdk/sdk.bundle')
+              .then(function () {
+                window.__sdkWarmed = true;
+                append('WARM sdk ready');
+                try {
+                  if (window.RNHostBridge && window.RNHostBridge.invoke) {
+                    window.RNHostBridge.invoke(JSON.stringify({ id: 0, action: 'warmReady', payload: {} }));
+                  }
+                } catch (_e) {}
+              })
+              .catch(function (e) { append('WARM FAILED ' + (e && e.stack || e)); });
+          }
           if (window.__kickFromArk) {
             window.startPluginHost();
           } else if (window.RNHostBridge) {
             append('waiting ArkTS kick (plugin download / cache)');
-          } else {
+          } else if (!warm) {
             setTimeout(function () {
               if (!window.__pluginBootStarted) {
                 append('auto-start after timeout');

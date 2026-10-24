@@ -5,6 +5,10 @@ import * as MiCloud from '../service/MiCloud';
 import { Logger } from '../common/AppConfig';
 import { ensureRnHostCache, RNHHOST_CACHE_REV } from '../service/RnHostWarm';
 import { resolvePlugin, PluginMeta, PluginUnavailableError } from '../service/PluginStore';
+import {
+  ensureWarmWeb, getWarmController, getWarmNode, isWarmSdkReady, WarmNodeController,
+  attachWarmBridge, detachWarmBridge, abandonWarm, activateWarm
+} from '../service/RnWebPool';
 
 const TAG = 'PluginHost';
 
@@ -49,6 +53,10 @@ class RnHostBridge {
     }
     if (action === 'bootFailed') {
       this.page.onBootFailed(String(payload['msg'] ?? ''));
+      return JSON.stringify({ 'ok': true, 'id': reqId } as Record<string, Object>);
+    }
+    if (action === 'warmReady') {
+      Logger.info(TAG, 'PERF warmReady from JS');
       return JSON.stringify({ 'ok': true, 'id': reqId } as Record<string, Object>);
     }
     if (action === 'hostDevice') {
@@ -96,6 +104,13 @@ struct PluginHost {
   private kicked: boolean = false;
   private tPage: number = 0;
   private firstPropMs: number = -1;
+  @State useWarm: boolean = false;
+  /** 0=尚未决定 1=暖机 NodeContainer 2=冷 Web */
+  @State webSurface: number = 0;
+  private warmNodeRef: WarmNodeController | null = null;
+  private usingWarmController: boolean = false;
+  private warmFallbackTimer: number = -1;
+  private claimPollTimer: number = -1;
 
   aboutToAppear(): void {
     this.tPage = Date.now();
@@ -112,7 +127,7 @@ struct PluginHost {
     this.online = (params['online'] ?? '1') !== '0';
     this.deviceTitle = this.name;
     this.deviceSub = `${this.model} · ${this.did}`;
-    this.statusText = '加载米家插件中…';
+    this.statusText = '';
     this.prepareAndLoad();
     this.preparePlugin();
   }
@@ -129,7 +144,7 @@ struct PluginHost {
       this.pluginMeta = meta;
       this.progressPct = -1;
       Logger.info(TAG, `PERF pluginReady ${meta.key} pkg=${meta.packageName} +${Date.now() - t0}ms page+${Date.now() - this.tPage}ms`);
-      this.statusText = `插件 v${meta.versionName}（${meta.bundled ? '内置' : '已缓存'}）启动中…`;
+      this.statusText = '';
       this.kickBoot();
     } catch (e) {
       const err: Error = e as Error;
@@ -211,6 +226,14 @@ struct PluginHost {
       clearTimeout(this.fallbackTimer);
       this.fallbackTimer = -1;
     }
+    this.clearWarmTimers();
+    if (this.usingWarmController) {
+      try {
+        detachWarmBridge();
+      } catch (_e) {
+      }
+      // NodeContainer disappear 会 scheduleRewarm；此处不 abandon
+    }
     this.restoreStatusBar();
   }
 
@@ -239,11 +262,74 @@ struct PluginHost {
     if (name === 'firstPaint' || name === 'bootOk') {
       this.bootMsText = `RN ${name} ${Math.round(ms)}ms · 页打开 ${Date.now() - this.tPage}ms`;
       this.webReady = true;
+      this.clearWarmTimers();
+      Logger.info(TAG, `PERF ${name}=${Math.round(ms)}ms page+${Date.now() - this.tPage}ms warm=${this.usingWarmController}`);
     }
     if (name === 'firstProp' && this.firstPropMs < 0) {
       this.firstPropMs = ms;
       Logger.info(TAG, `PERF firstProp=${ms}ms page=${Date.now() - this.tPage}ms`);
     }
+  }
+
+  private clearWarmTimers(): void {
+    if (this.warmFallbackTimer >= 0) {
+      clearTimeout(this.warmFallbackTimer);
+      this.warmFallbackTimer = -1;
+    }
+    if (this.claimPollTimer >= 0) {
+      clearTimeout(this.claimPollTimer);
+      this.claimPollTimer = -1;
+    }
+  }
+
+  /** 认领预热 Web：warm5 关闭（skipSdk 后 __r(10001) 失败），直走冷路径 */
+  private claimWarmPath(): boolean {
+    return false;
+  }
+
+  private fallbackColdFromWarm(): void {
+    this.clearWarmTimers();
+    try {
+      abandonWarm();
+    } catch (_e) {
+    }
+    try {
+      detachWarmBridge();
+    } catch (_e2) {
+    }
+    this.usingWarmController = false;
+    this.warmNodeRef = null;
+    this.useWarm = false;
+    this.webSurface = 2;
+    this.controller = new webview.WebviewController();
+    this.hostLoaded = false;
+    this.hostPageLoaded = false;
+    this.kicked = false;
+    this.blankDone = false;
+    this.pageReady = false;
+    this.webReady = false;
+    Logger.info(TAG, 'PERF coldFallback after warm fail');
+    // 冷 Web 会在 build 里挂载；onControllerAttached 触发 loadHostPage
+  }
+
+  private pollClaimOrCold(n: number): void {
+    if (this.useWarm || this.hostLoaded) {
+      return;
+    }
+    if (this.claimWarmPath()) {
+      return;
+    }
+    // 最多等 ~400ms 暖机就绪，否则立刻冷启动（不让用户干等）
+    if (n >= 10) {
+      Logger.info(TAG, `PERF warmMiss -> cold page+${Date.now() - this.tPage}ms`);
+      this.webSurface = 2;
+      // blankDone 等冷 Web onControllerAttached
+      return;
+    }
+    this.claimPollTimer = setTimeout(() => {
+      this.claimPollTimer = -1;
+      this.pollClaimOrCold(n + 1);
+    }, 40);
   }
 
   private async prepareAndLoad(): Promise<void> {
@@ -259,20 +345,23 @@ struct PluginHost {
       }
       this.hostDir = await ensureRnHostCache(ctx);
       Logger.info(TAG, `PERF cacheReady +${Date.now() - t0}ms page+${Date.now() - this.tPage}ms dir=${this.hostDir}`);
-      if (!this.failed) {
-        this.statusText = `缓存就绪 +${Date.now() - t0}ms`;
+      try {
+        const ui = this.getUIContext();
+        ensureWarmWeb(ui, this.hostDir, this.statusBarVp);
+      } catch (eW2) {
+        Logger.error(TAG, `ensureWarm late: ${eW2}`);
       }
-      if (this.blankDone) {
-        this.loadHostPage();
+      // warm5: 不 claim，直接冷启动（避免 2.5s fallback / 8s bootFailed）
+      if (this.claimWarmPath()) {
+        return;
       }
+      this.webSurface = 2;
     } catch (e) {
       this.statusText = `准备失败，回退 rawfile: ${e}`;
       Logger.error(TAG, `prepareAndLoad: ${e}`);
       this.hostDir = '';
       this.cacheFailed = true;
-      if (this.blankDone) {
-        this.loadHostPage();
-      }
+      this.webSurface = 2;
     }
   }
 
@@ -296,9 +385,7 @@ struct PluginHost {
       this.kicked = false;
       this.controller.loadUrl(url);
       Logger.info(TAG, `PERF loadUrl +${Date.now() - tLoad}ms page+${Date.now() - this.tPage}ms`);
-      if (!this.failed) {
-        this.statusText = 'Web 加载中…';
-      }
+      // 加载态只显示 spinner，不刷状态文案
     } catch (e2) {
       Logger.error(TAG, `loadUrl: ${e2}`);
       this.statusText = `loadUrl 失败: ${e2}`;
@@ -321,7 +408,8 @@ struct PluginHost {
       'packagePrefix': meta.packagePrefix ?? '',
       'versionName': meta.versionName,
       'apiLevel': meta.apiLevel,
-      'model': meta.model
+      'model': meta.model,
+      'skipSdk': this.usingWarmController
     };
     const dev: Record<string, Object> = {
       'did': this.did,
@@ -348,10 +436,7 @@ struct PluginHost {
       '})();';
     try {
       this.controller.runJavaScript(js);
-      Logger.info(TAG, `PERF kickBoot page+${Date.now() - this.tPage}ms`);
-      if (!this.failed) {
-        this.statusText = '插件启动中…';
-      }
+      Logger.info(TAG, `PERF kickBoot page+${Date.now() - this.tPage}ms warm=${this.usingWarmController}`);
     } catch (e) {
       Logger.error(TAG, `kickBoot: ${e}`);
       this.statusText = `kickBoot 失败: ${e}`;
@@ -600,180 +685,190 @@ struct PluginHost {
 
   build() {
     Stack({ alignContent: Alignment.Top }) {
-      // 先载 about:blank，再 loadUrl(file://filesDir/...)；避免 $rawfile src 在 attach 后覆盖 loadUrl
-      Web({ src: 'about:blank', controller: this.controller })
-        .width('100%')
-        .height('100%')
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
-        .javaScriptAccess(true)
-        .domStorageAccess(true)
-        .fileAccess(true)
-        .onControllerAttached(() => {
-          this.pageReady = true;
-          Logger.info(TAG, `PERF onControllerAttached page+${Date.now() - this.tPage}ms`);
-          // 兜底：about:blank 的 onPageEnd 若未触发，500ms 后照常加载
-          setTimeout(() => {
-            if (!this.blankDone) {
+      if (this.webSurface === 1 && this.warmNodeRef !== null) {
+        NodeContainer(this.warmNodeRef)
+          .width('100%')
+          .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
+      } else if (this.webSurface === 2) {
+        // 冷启动：先 about:blank，再 loadUrl(file://…)
+        Web({ src: 'about:blank', controller: this.controller })
+          .width('100%')
+          .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
+          .javaScriptAccess(true)
+          .domStorageAccess(true)
+          .fileAccess(true)
+          .onControllerAttached(() => {
+            this.pageReady = true;
+            Logger.info(TAG, `PERF onControllerAttached page+${Date.now() - this.tPage}ms`);
+            setTimeout(() => {
+              if (!this.blankDone) {
+                this.blankDone = true;
+                if (this.hostDir.length > 0 || this.cacheFailed) {
+                  this.loadHostPage();
+                }
+              }
+            }, 60);
+            try {
+              webview.WebviewController.setWebDebuggingAccess(true);
+            } catch (_e) {
+            }
+          })
+          .onPageBegin((event) => {
+            const url: string = event && event.url ? event.url : '';
+            Logger.info(TAG, `PERF onPageBegin page+${Date.now() - this.tPage}ms ${url}`);
+          })
+          .onPageEnd((event) => {
+            const url: string = event && event.url ? event.url : '';
+            Logger.info(TAG, `PERF onPageEnd page+${Date.now() - this.tPage}ms ${url}`);
+            if (!this.blankDone && (url.length === 0 || url.indexOf('about:blank') === 0)) {
               this.blankDone = true;
               if (this.hostDir.length > 0 || this.cacheFailed) {
                 this.loadHostPage();
               }
+              return;
             }
-          }, 500);
-          try {
-            webview.WebviewController.setWebDebuggingAccess(true);
-          } catch (_e) {
-          }
-        })
-        .onPageBegin((event) => {
-          const url: string = event && event.url ? event.url : '';
-          Logger.info(TAG, `PERF onPageBegin page+${Date.now() - this.tPage}ms ${url}`);
-        })
-        .onPageEnd((event) => {
-          const url: string = event && event.url ? event.url : '';
-          Logger.info(TAG, `PERF onPageEnd page+${Date.now() - this.tPage}ms ${url}`);
-          if (!this.blankDone && (url.length === 0 || url.indexOf('about:blank') === 0)) {
-            this.blankDone = true;
-            if (this.hostDir.length > 0 || this.cacheFailed) {
-              this.loadHostPage();
+            const isFileHost: boolean = url.indexOf('rnhost_web') >= 0 || url.indexOf('file://') >= 0 ||
+              url.indexOf('rnhost/index.html') >= 0 || url.indexOf('rnhost.local') >= 0;
+            if (isFileHost) {
+              this.hostPageLoaded = true;
+              setTimeout(() => {
+                this.kickBoot();
+              }, 0);
             }
-            return;
-          }
-          const isFileHost: boolean = url.indexOf('rnhost_web') >= 0 || url.indexOf('file://') >= 0 ||
-            url.indexOf('rnhost/index.html') >= 0;
-          if (isFileHost) {
-            this.hostPageLoaded = true;
-            // 缩短等待：DOM 已就绪即可 kick（插件未就绪时由 preparePlugin 完成后再 kick）
-            setTimeout(() => {
-              this.kickBoot();
-            }, 40);
-          }
-        })
-        .onErrorReceive((event) => {
-          let url: string = '';
-          let main: boolean = false;
-          let info: string = '';
-          try {
-            if (event && event.request) {
-              url = event.request.getRequestUrl();
-              main = event.request.isMainFrame();
+          })
+          .onErrorReceive((event) => {
+            let url: string = '';
+            let main: boolean = false;
+            let info: string = '';
+            try {
+              if (event && event.request) {
+                url = event.request.getRequestUrl();
+                main = event.request.isMainFrame();
+              }
+              if (event && event.error) {
+                info = String(event.error.getErrorCode()) + ' ' + String(event.error.getErrorInfo());
+              }
+            } catch (e) {
+              info = String(e);
             }
-            if (event && event.error) {
-              info = String(event.error.getErrorCode()) + ' ' + String(event.error.getErrorInfo());
+            Logger.error(TAG, `onErrorReceive main=${main} url=${url} err=${info}`);
+            if (main) {
+              this.statusText = `Web主框错误: ${url.length > 0 ? url : info}`;
+              this.failed = true;
             }
-          } catch (e) {
-            info = String(e);
-          }
-          Logger.error(TAG, `onErrorReceive main=${main} url=${url} err=${info}`);
-          if (main) {
-            this.statusText = `Web主框错误: ${url.length > 0 ? url : info}`;
-          }
-        })
-        .onHttpErrorReceive((event) => {
-          let url: string = '';
-          let main: boolean = false;
-          try {
-            if (event && event.request) {
-              url = event.request.getRequestUrl();
-              main = event.request.isMainFrame();
+          })
+          .onHttpErrorReceive((event) => {
+            let url: string = '';
+            let main: boolean = false;
+            try {
+              if (event && event.request) {
+                url = event.request.getRequestUrl();
+                main = event.request.isMainFrame();
+              }
+            } catch (_e) {
             }
-          } catch (_e) {
-          }
-          Logger.error(TAG, `onHttpErrorReceive main=${main} url=${url}`);
-          if (main) {
-            this.statusText = `Web HTTP错误: ${url}`;
-          }
-        })
-        .onConsole((event) => {
-          try {
-            const msg = event.message.getMessage();
-            // 安静：仅转发含 PERF / boot / FAIL 的行
-            if (msg.indexOf('PERF') >= 0 || msg.indexOf('boot') >= 0 || msg.indexOf('FAIL') >= 0 ||
-              msg.indexOf('FAILED') >= 0 || msg.indexOf('MIOTRPC') >= 0 || msg.indexOf('callMethod') >= 0 ||
-              msg.indexOf('callSmartHome') >= 0 || msg.indexOf('bridge') >= 0 || msg.indexOf('cloud') >= 0) {
-              Logger.info(TAG, 'console ' + msg);
+            Logger.error(TAG, `onHttpErrorReceive main=${main} url=${url}`);
+            if (main) {
+              this.statusText = `Web HTTP错误: ${url}`;
+              this.failed = true;
             }
-          } catch (_e) {
-          }
-          return false;
-        })
+          })
+          .onConsole((event) => {
+            try {
+              const msg = event.message.getMessage();
+              if (msg.indexOf('PERF') >= 0 || msg.indexOf('boot') >= 0 || msg.indexOf('FAIL') >= 0 ||
+                msg.indexOf('FAILED') >= 0 || msg.indexOf('MIOTRPC') >= 0 || msg.indexOf('callMethod') >= 0 ||
+                msg.indexOf('callSmartHome') >= 0 || msg.indexOf('bridge') >= 0 || msg.indexOf('cloud') >= 0 ||
+                msg.indexOf('WARM') >= 0 || msg.indexOf('skipSdk') >= 0) {
+                Logger.info(TAG, 'console ' + msg);
+              }
+            } catch (_e) {
+            }
+            return false;
+          })
+      }
 
-      // 加载期原生头（插件首帧后隐藏，插件全屏，与米家一致）
+      // 加载遮罩：米家风格居中 Loading，保留原生头设备名；首帧后隐藏
       if (!this.webReady) {
         Column() {
           Row() {
             Text('←')
-              .fontSize(20)
+              .fontSize(22)
+              .fontColor('#222222')
+              .padding({ left: 4, right: 12, top: 4, bottom: 4 })
               .onClick(() => {
                 router.back();
               })
-            Text('米家插件')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .margin({ left: 12 })
-              .layoutWeight(1)
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12, bottom: 4 })
-
-          // 原生头：一进页就显示，不等 Web
-          Column() {
-            Text(this.deviceTitle)
-              .fontSize(18)
+            Text(this.deviceTitle.length > 0 ? this.deviceTitle : '米家插件')
+              .fontSize(17)
               .fontWeight(FontWeight.Medium)
               .fontColor('#222222')
-            Text(this.deviceSub)
-              .fontSize(12)
-              .fontColor('#888888')
-              .margin({ top: 2 })
-            Text(this.statusText)
-              .fontSize(12)
-              .fontColor(this.failed ? '#D32F2F' : '#666666')
-              .margin({ top: 4 })
-            if (this.progressPct >= 0) {
-              Progress({ value: this.progressPct, total: 100, type: ProgressType.Linear })
-                .width('100%')
-                .color('#1677FF')
-                .margin({ top: 6 })
-            }
-            Row() {
-              if (this.failed && !this.unavailable) {
-                Button('重试')
-                  .fontSize(13)
-                  .height(30)
-                  .margin({ right: 10 })
-                  .onClick(() => {
-                    this.retry();
-                  })
-              }
-              Button('使用原生控制页')
-                .fontSize(13)
-                .height(30)
-                .backgroundColor(this.failed ? '#1677FF' : '#E0E0E0')
-                .fontColor(this.failed ? '#FFFFFF' : '#333333')
-                .onClick(() => {
-                  this.openNative();
-                })
-            }
-            .margin({ top: 8 })
-            if (this.bootMsText.length > 0) {
-              Text(this.bootMsText)
-                .fontSize(10)
-                .fontColor('#2e7d32')
-                .margin({ top: 2 })
-            }
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
           }
           .width('100%')
-          .alignItems(HorizontalAlign.Start)
-          .padding({ left: 16, right: 16, bottom: 8 })
-          .backgroundColor('#FFF8E1')
+          .padding({ left: 12, right: 16, top: 10, bottom: 10 })
+
+          Column() {
+            if (this.failed) {
+              Text(this.statusText)
+                .fontSize(14)
+                .fontColor('#D32F2F')
+                .textAlign(TextAlign.Center)
+                .padding({ left: 24, right: 24 })
+              Row() {
+                if (!this.unavailable) {
+                  Button('重试')
+                    .fontSize(14)
+                    .height(36)
+                    .margin({ right: 12 })
+                    .onClick(() => {
+                      this.retry();
+                    })
+                }
+                Button('使用原生控制页')
+                  .fontSize(14)
+                  .height(36)
+                  .backgroundColor('#33A0FF')
+                  .fontColor('#FFFFFF')
+                  .onClick(() => {
+                    this.openNative();
+                  })
+              }
+              .margin({ top: 20 })
+            } else {
+              Stack({ alignContent: Alignment.Center }) {
+                if (this.progressPct >= 0) {
+                  Progress({ value: this.progressPct, total: 100, type: ProgressType.Ring })
+                    .width(56)
+                    .height(56)
+                    .color('#33A0FF')
+                }
+                LoadingProgress()
+                  .width(36)
+                  .height(36)
+                  .color('#33A0FF')
+              }
+              .width(56)
+              .height(56)
+            }
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
         }
         .width('100%')
-        .backgroundColor('#FFF8E1')
+        .height('100%')
+        .backgroundColor(this.failed ? '#F7F7F7' : '#F5F5F5')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor('#F5F5F5')
   }
 }

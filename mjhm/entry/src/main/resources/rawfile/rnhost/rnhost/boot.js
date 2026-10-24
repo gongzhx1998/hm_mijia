@@ -13,13 +13,43 @@
   var log = global.__RNHostLog || function () {};
   var mark = function (n) { return (HOST && HOST.mark) ? HOST.mark(n) : (log('PERF', n), 0); };
 
-  // Capture before Metro / InitializeCore patches timers & require
+  // Capture before Metro / InitializeCore patches timers & Promise (warm reuse needs these)
+  var HostPromise = global.Promise;
   var hostSetTimeout = global.setTimeout;
   var hostClearTimeout = global.clearTimeout;
+  try {
+    if (HOST && HOST.nativeTimers) {
+      hostSetTimeout = HOST.nativeTimers.setTimeout;
+      hostClearTimeout = HOST.nativeTimers.clearTimeout;
+    }
+  } catch (_nt) {}
   var nodeRequire = typeof global.require === 'function' ? global.require : null;
   try {
     if (!nodeRequire && typeof require === 'function') nodeRequire = require;
   } catch (_e) {}
+
+  function startBridgePump() {
+    // RN Promise/JSTimers 依赖 MessageQueue；暖机 skipSdk 后必须用原生 timer 泵队列
+    try {
+      if (HOST && HOST._pumpId != null) return;
+      var nt = HOST && HOST.nativeTimers;
+      var st = (nt && nt.setTimeout) || hostSetTimeout;
+      var si = (nt && nt.setInterval) || global.setInterval;
+      HOST._pumpId = si.call(global, function () {
+        try { HOST.pollQueue(); } catch (_p) {}
+      }, 8);
+    } catch (_e2) {}
+  }
+  function stopBridgePump() {
+    try {
+      if (HOST && HOST._pumpId != null) {
+        var nt = HOST.nativeTimers;
+        var ci = (nt && nt.clearInterval) || global.clearInterval;
+        ci.call(global, HOST._pumpId);
+        HOST._pumpId = null;
+      }
+    } catch (_e3) {}
+  }
 
   function ensureGlobals() {
     try {
@@ -36,13 +66,25 @@
   }
 
   function delay(ms) {
-    return new Promise(function (resolve) {
+    return new HostPromise(function (resolve) {
       hostSetTimeout(resolve, ms);
     });
   }
 
+  function absolutize(src) {
+    if (!src) return src;
+    if (/^(https?:|file:|data:)/i.test(src)) return src;
+    try {
+      if (typeof location !== 'undefined' && location.href && location.protocol !== 'about:') {
+        return new URL(src, location.href).href;
+      }
+    } catch (_e) {}
+    return src;
+  }
+
   function loadClassicScript(src) {
-    return new Promise(function (resolve, reject) {
+    return new HostPromise(function (resolve, reject) {
+      src = absolutize(src);
       var canDom = typeof document !== 'undefined' && document.createElement && !global.__RNHostForceVmEval;
       if (!canDom) {
         try {
@@ -58,17 +100,30 @@
         }
         return;
       }
+      var done = false;
+      var timer = hostSetTimeout(function () {
+        if (done) return;
+        done = true;
+        log('script TIMEOUT', src);
+        reject(new Error('script timeout ' + src));
+      }, 8000);
+      function fin(err) {
+        if (done) return;
+        done = true;
+        try { hostClearTimeout(timer); } catch (_c) {}
+        if (err) reject(err); else resolve();
+      }
       log('script insert', src);
       var s = document.createElement('script');
       s.src = src;
       s.async = false;
       s.onload = function () {
         log('script onload', src);
-        resolve();
+        fin(null);
       };
       s.onerror = function () {
         log('script onerror', src);
-        reject(new Error('script onerror ' + src));
+        fin(new Error('script onerror ' + src));
       };
       (document.head || document.documentElement || document.body).appendChild(s);
     });
@@ -103,8 +158,8 @@
         }
       }
       var real = keys ? keys.filter(function (k) { return k !== 'sdk'; }) : [];
-      if (keys && real.length === 0 && HOST.firstFatal) {
-        throw new Error('插件入口执行出错（未注册任何界面）：' + HOST.firstFatal);
+      if (keys && real.length === 0) {
+        throw new Error('插件入口执行出错（未注册任何界面）：' + (HOST.firstFatal || ('no AppRegistry key for ' + packageName)));
       }
     } catch (_k) {
       if (_k && /插件入口执行出错/.test(String(_k.message))) throw _k;
@@ -158,49 +213,161 @@
     var pluginIds = [];
     ensureGlobals();
     HOST.boot({ device: options.device, packageName: packageName, plugin: options.plugin });
+    HOST._t0 = 0; // 每次真正启动插件重新计时（暖机阶段的 mark 不计入）
     mark('loadAndRunStart');
     log('loadAndRun via <script src>', sdkUrl, pluginUrl);
 
-    return loadClassicScript(sdkUrl)
-      .then(function () {
-        if (typeof global.__r !== 'function') {
-          throw new Error('global.__r missing after sdk.bundle');
-        }
-        mark('sdkScriptLoaded');
-        log('sdk loaded, calling InitializeCore __r(10120)');
-        try {
-          global.__r(10120);
-          log('InitializeCore ok');
-          mark('initializeCore');
-          // 与米家一致：sdk.bundle 尾部的 /**MIOT_SDK_LOADER**/ 还会执行 __r(10290)（miot-sdk/native/plugin），
-          // 按正确顺序预加载 SDK 模块；缺了它，部分插件会因循环依赖拿到未初始化的装饰器（decorator is not a function）
-          if (options.sdkLoader !== false) {
-            try {
-              global.__r(10290);
-              mark('sdkLoader');
-            } catch (eL) {
-              log('sdk loader __r(10290) err', String(eL && eL.stack || eL));
-            }
+    function runSdkInit() {
+      if (typeof global.__r !== 'function') {
+        throw new Error('global.__r missing after sdk.bundle');
+      }
+      mark('sdkScriptLoaded');
+      log('sdk loaded, calling InitializeCore __r(10120)');
+      try {
+        global.__r(10120);
+        log('InitializeCore ok');
+        mark('initializeCore');
+        if (options.sdkLoader !== false) {
+          try {
+            global.__r(10290);
+            mark('sdkLoader');
+          } catch (eL) {
+            log('sdk loader __r(10290) err', String(eL && eL.stack || eL));
           }
-        } catch (e) {
-          log('InitializeCore err', String(e && e.stack || e));
-          throw e;
         }
-        // 记录插件 bundle 定义的模块 id，用于校正入口（数字 10001 / "前缀-10001" 等不同布局）
-        var origD = global.__d;
-        if (typeof origD === 'function') {
-          global.__d = function (factory, id) {
-            if (id !== undefined) pluginIds.push(id);
-            return origD.apply(this, arguments);
-          };
+        global.__sdkWarmed = true;
+      } catch (e) {
+        log('InitializeCore err', String(e && e.stack || e));
+        throw e;
+      }
+    }
+
+    function loadPlugin() {
+      var origD = global.__d;
+      if (typeof origD === 'function') {
+        global.__d = function (factory, id) {
+          if (id !== undefined) pluginIds.push(id);
+          return origD.apply(this, arguments);
+        };
+      }
+      return loadClassicScript(pluginUrl).then(function () {
+        if (origD) global.__d = origD;
+      }, function (eS) {
+        if (origD) global.__d = origD;
+        throw eS;
+      });
+    }
+
+    function waitMicrotasks(ms) {
+      // 原生 timer + 泵 RN MessageQueue，避免 HostPromise 抢先结束而 AppRegistry 尚未 register
+      return new HostPromise(function (resolve) {
+        var done = false;
+        function fin() { if (!done) { done = true; resolve(); } }
+        var n = 0;
+        (function tick() {
+          try { for (var i = 0; i < 16; i++) HOST.pollQueue(); } catch (_p) {}
+          try {
+            HostPromise.resolve().then(function () { HostPromise.resolve().then(function () {}); });
+          } catch (_e) {}
+          if (++n > ((ms || 16) / 4)) { fin(); return; }
+          hostSetTimeout(tick, 4);
+        })();
+        hostSetTimeout(fin, ms || 16);
+      });
+    }
+
+    function waitForAppRegistered(packageName, maxMs) {
+      return new HostPromise(function (resolve) {
+        var t0 = Date.now();
+        (function tick() {
+          try { for (var i = 0; i < 24; i++) HOST.pollQueue(); } catch (_p) {}
+          try {
+            var ar = requireAppRegistry();
+            var keys = ar.mod.getAppKeys ? ar.mod.getAppKeys() : [];
+            var real = (keys || []).filter(function (k) { return k !== 'sdk'; });
+            if (real.length > 0) {
+              log('appKeys ready', JSON.stringify(real));
+              resolve(real);
+              return;
+            }
+          } catch (_e) {}
+          if (Date.now() - t0 >= (maxMs || 250)) {
+            log('appKeys timeout', packageName);
+            resolve([]);
+            return;
+          }
+          hostSetTimeout(tick, 8);
+        })();
+      });
+    }
+
+    function waitForFirstPaint() {
+      return new HostPromise(function (resolve) {
+        var root = typeof document !== 'undefined' ? document.getElementById('rn-root') : null;
+        var done = false;
+        function finish(why) {
+          if (done) return;
+          done = true;
+          log('firstPaint detect', why);
+          resolve();
         }
-        return loadClassicScript(pluginUrl).then(function () {
-          if (origD) global.__d = origD;
-        }, function (eS) {
-          if (origD) global.__d = origD;
-          throw eS;
-        });
-      })
+        function hasRn() {
+          try {
+            if (!root) return false;
+            if (root.querySelector('[data-rn]')) return true;
+            if (root.querySelector('[data-tag]')) return true;
+            // 任意非占位子节点
+            for (var i = 0; i < root.children.length; i++) {
+              if (root.children[i].id !== 'rn-placeholder') return true;
+            }
+          } catch (_e) {}
+          return false;
+        }
+        if (hasRn()) { finish('sync'); return; }
+        var obs = null;
+        try {
+          if (root && typeof MutationObserver === 'function') {
+            obs = new MutationObserver(function () {
+              if (hasRn()) {
+                if (obs) obs.disconnect();
+                // 双 rAF：等布局/绘制一帧
+                var raf = HOST.nativeRaf || (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null);
+                if (raf) {
+                  raf.call(global, function () { raf.call(global, function () { finish('mutation'); }); });
+                } else {
+                  hostSetTimeout(function () { finish('mutation'); }, 16);
+                }
+              }
+            });
+            obs.observe(root, { childList: true, subtree: true });
+          }
+        } catch (_e2) {}
+        // 已有视图时立刻结束；否则最多等 280ms（不再固定 400ms）
+        var n = 0;
+        (function tick() {
+          for (var i = 0; i < 8; i++) HOST.pollQueue();
+          if (hasRn()) { if (obs) try { obs.disconnect(); } catch (_e3) {} finish('poll'); return; }
+          if (++n > 35) { if (obs) try { obs.disconnect(); } catch (_e4) {} finish('timeout'); return; }
+          hostSetTimeout(tick, 8);
+        })();
+      });
+    }
+
+    var chain;
+    if (options.skipSdk || global.__sdkWarmed) {
+      mark('sdkSkipped');
+      log('skipSdk, __sdkWarmed=', !!global.__sdkWarmed);
+      startBridgePump();
+      chain = HostPromise.resolve();
+    } else {
+      chain = loadClassicScript(sdkUrl).then(function () {
+        runSdkInit();
+        startBridgePump();
+      });
+    }
+
+    return chain
+      .then(function () { return loadPlugin(); })
       .then(function () {
         mark('pluginScriptLoaded');
         entries = resolveEntries(entries, pluginIds, options.plugin && options.plugin.packagePrefix);
@@ -215,8 +382,9 @@
           log('plugin entry err', String(e && e.stack || e));
           throw e;
         }
-        // Let Promise.resolve().then(init) register AppRegistry component
-        return delay(120);
+        return waitMicrotasks(32).then(function () {
+          return waitForAppRegistered(packageName, 280);
+        });
       })
       .then(function () {
         mark('beforeRunApplication');
@@ -224,16 +392,35 @@
         runApplication(packageName, rootTag);
         log('after runApplication, waiting paint');
         mark('runApplication');
-        return delay(400);
+        for (var i = 0; i < 24; i++) HOST.pollQueue();
+        return waitForFirstPaint();
       })
       .then(function () {
-        for (var i = 0; i < 20; i++) HOST.pollQueue();
+        for (var i = 0; i < 12; i++) HOST.pollQueue();
         var snap = HOST.snapshotViews();
         log('view count', snap.length);
         mark('firstPaint');
         mark('bootOk');
+        stopBridgePump();
         if (typeof HOST.onViewTree === 'function') HOST.onViewTree(snap);
         return snap;
       });
+  };
+
+  /** 暖机：只加载并初始化 SDK，供离线 Web 预热 */
+  HOST.warmSdk = function (sdkUrl) {
+    ensureGlobals();
+    mark('warmSdkStart');
+    return loadClassicScript(sdkUrl || 'sdk/sdk.bundle').then(function () {
+      if (typeof global.__r !== 'function') throw new Error('no __r after sdk');
+      mark('sdkScriptLoaded');
+      global.__r(10120);
+      mark('initializeCore');
+      try { global.__r(10290); mark('sdkLoader'); } catch (eL) { log('warm sdkLoader', String(eL)); }
+      global.__sdkWarmed = true;
+      mark('sdkWarmReady');
+      log('warmSdk done');
+      return true;
+    });
   };
 })(typeof window !== 'undefined' ? window : typeof globalThis !== 'undefined' ? globalThis : typeof global !== 'undefined' ? global : this);
