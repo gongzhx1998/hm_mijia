@@ -20,6 +20,9 @@ export interface CloudDevice {
   latitude?: number;
   longitude?: number;
   orderTime?: number; // 米家设备绑定/排序时间戳
+  mac?: string;
+  parentId?: string;
+  pid?: number;
 }
 
 export interface CloudRoom {
@@ -667,7 +670,10 @@ export async function getDevices(country: string = 'cn'): Promise<CloudDevice[]>
         bssid: String(d['bssid'] ?? ''),
         latitude: Number(d['latitude'] ?? 0),
         longitude: Number(d['longitude'] ?? 0),
-        orderTime: Number(d['orderTime'] ?? 0)
+        orderTime: Number(d['orderTime'] ?? 0),
+        mac: String(d['mac'] ?? ''),
+        parentId: String(d['parent_id'] ?? ''),
+        pid: Number(d['pid'] ?? 0)
       };
       devices.push(dev);
     }

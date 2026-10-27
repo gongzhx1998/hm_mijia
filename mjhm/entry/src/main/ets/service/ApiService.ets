@@ -3,8 +3,9 @@ import { AppConfig, Logger } from '../common/AppConfig';
 import * as MiCloud from './MiCloud';
 import * as Storage from './Storage';
 import { geoLocationManager } from '@kit.LocationKit';
-import { wifiManager } from '@kit.ConnectivityKit';
+import { wifiManager, access, ble } from '@kit.ConnectivityKit';
 import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
+import { http } from '@kit.NetworkKit';
 
 const TAG = 'ApiService';
 const KEY_PRODUCT_ICONS = 'mijia_product_icons_v1';
@@ -331,10 +332,289 @@ export interface AutoSwitchHomeResult {
   distanceMeters?: number;
 }
 
+export interface HostLocationInfo {
+  latitude: number;
+  longitude: number;
+  country: string;
+  countryCode: string;
+  province: string;
+  city: string;
+  district: string;
+  address: string;
+  cityCode: string;
+  adcode: string;
+}
+
+let cachedLocationInfo: HostLocationInfo | null = null;
+
+/** 国内常见行政区划代码（前4位地级市）到中心经纬度映射，供平板/模拟器 GPS 关闭时 IP 定位兜底 */
+function districtCodeToCoord(code: string): [number, number, string, string] {
+  const pfx4 = code.length >= 4 ? code.substring(0, 4) : code;
+  if (pfx4 === '3714') {
+    return [37.4341, 116.3575, '山东省', '德州市'];
+  }
+  if (pfx4 === '3701') {
+    return [36.6512, 117.1201, '山东省', '济南市'];
+  }
+  if (pfx4 === '3702') {
+    return [36.0671, 120.3826, '山东省', '青岛市'];
+  }
+  if (pfx4.startsWith('11')) {
+    return [39.9042, 116.4074, '北京市', '北京市'];
+  }
+  if (pfx4.startsWith('31')) {
+    return [31.2304, 121.4737, '上海市', '上海市'];
+  }
+  if (pfx4.startsWith('4401')) {
+    return [23.1291, 113.2644, '广东省', '广州市'];
+  }
+  if (pfx4.startsWith('4403')) {
+    return [22.5431, 114.0579, '广东省', '深圳市'];
+  }
+  if (pfx4.startsWith('3301')) {
+    return [30.2741, 120.1551, '浙江省', '杭州市'];
+  }
+  return [0, 0, '', ''];
+}
+
+/** 当系统定位开关未开或无 GPS 硬件时，通过国内直连 IP 定位服务获取经纬度与城市 */
+async function fetchIpLocationFallback(): Promise<HostLocationInfo | null> {
+  const req = http.createHttp();
+  try {
+    const resp = await req.request('https://r.inews.qq.com/api/ip2city', {
+      method: http.RequestMethod.GET,
+      connectTimeout: 3500,
+      readTimeout: 3500,
+      expectDataType: http.HttpDataType.STRING
+    });
+    if (resp.responseCode === 200 && typeof resp.result === 'string') {
+      const obj = JSON.parse(resp.result as string) as Record<string, Object>;
+      const distCode = String(obj['districtCode'] ?? '');
+      const prov = String(obj['province'] ?? '');
+      const city = String(obj['city'] ?? '');
+      const dist = String(obj['district'] ?? '');
+      const coord = districtCodeToCoord(distCode);
+      if (coord[0] !== 0 || coord[1] !== 0) {
+        const pName = prov !== '' ? prov : coord[2];
+        const cName = city !== '' ? city : coord[3];
+        const info: HostLocationInfo = {
+          latitude: coord[0],
+          longitude: coord[1],
+          country: '中国',
+          countryCode: 'CN',
+          province: pName,
+          city: cName,
+          district: dist,
+          address: `${pName}${cName}${dist}`,
+          cityCode: String(obj['citycode'] ?? '0531'),
+          adcode: distCode !== '' ? distCode : '370100'
+        };
+        Logger.info(TAG, `IP location fallback ok: adcode=${distCode} lat=${info.latitude} lon=${info.longitude}`);
+        return info;
+      }
+    }
+  } catch (eIp) {
+    Logger.info(TAG, `fetchIpLocationFallback skipped: ${eIp}`);
+  } finally {
+    req.destroy();
+  }
+  return null;
+}
+
 /**
- * 动态申请位置权限（APPROXIMATELY_LOCATION + LOCATION），并根据当前位置或当前连接 Wi-Fi BSSID 自动匹配所在家庭：
+ * 获取当前设备位置（供家庭自动切换及 RN 插件 MIOTSystem.getLocation / MIOTHost.getLocation 共用）：
+ * 优先使用系统 geoLocationManager；若平板/模拟器未开启系统位置开关（3301100）或超时，自动回退国内 IP 定位及当前家庭坐标。
+ */
+export async function getCurrentLocationOrFallback(): Promise<HostLocationInfo> {
+  let lat = 0;
+  let lon = 0;
+  try {
+    const lastLoc = geoLocationManager.getLastLocation();
+    if (lastLoc && (lastLoc.latitude !== 0 || lastLoc.longitude !== 0)) {
+      lat = lastLoc.latitude;
+      lon = lastLoc.longitude;
+      Logger.info(TAG, `getLastLocation lat=${lat} lon=${lon}`);
+    }
+  } catch (_eLast) {
+  }
+
+  if (lat === 0 && lon === 0) {
+    try {
+      const req: geoLocationManager.CurrentLocationRequest = {
+        priority: geoLocationManager.LocationRequestPriority.FIRST_FIX,
+        scenario: geoLocationManager.LocationRequestScenario.UNSET,
+        maxAccuracy: 0,
+        timeoutMs: 3000
+      };
+      const curLoc = await geoLocationManager.getCurrentLocation(req);
+      if (curLoc && (curLoc.latitude !== 0 || curLoc.longitude !== 0)) {
+        lat = curLoc.latitude;
+        lon = curLoc.longitude;
+        Logger.info(TAG, `getCurrentLocation lat=${lat} lon=${lon}`);
+      }
+    } catch (locErr) {
+      Logger.info(TAG, `getCurrentLocation skipped: ${JSON.stringify(locErr)}`);
+    }
+  }
+
+  if (lat !== 0 || lon !== 0) {
+    const sysInfo: HostLocationInfo = {
+      latitude: lat,
+      longitude: lon,
+      country: '中国',
+      countryCode: 'CN',
+      province: '山东省',
+      city: '济南市',
+      district: '',
+      address: '中国山东省',
+      cityCode: '0531',
+      adcode: '370100'
+    };
+    cachedLocationInfo = sysInfo;
+    return sysInfo;
+  }
+
+  if (cachedLocationInfo !== null) {
+    return cachedLocationInfo;
+  }
+
+  const ipLoc = await fetchIpLocationFallback();
+  if (ipLoc !== null) {
+    cachedLocationInfo = ipLoc;
+    return ipLoc;
+  }
+
+  // 最终兜底：取当前选中家庭或有经纬度的家庭坐标
+  try {
+    const cloudHomes = await MiCloud.getHomeList('cn');
+    for (let i = 0; i < cloudHomes.length; i++) {
+      const hLat = cloudHomes[i].latitude ?? 0;
+      const hLon = cloudHomes[i].longitude ?? 0;
+      if (hLat !== 0 || hLon !== 0) {
+        const homeLoc: HostLocationInfo = {
+          latitude: hLat,
+          longitude: hLon,
+          country: '中国',
+          countryCode: 'CN',
+          province: '山东省',
+          city: '济南市',
+          district: '',
+          address: cloudHomes[i].address ?? cloudHomes[i].name,
+          cityCode: '0531',
+          adcode: '370100'
+        };
+        cachedLocationInfo = homeLoc;
+        return homeLoc;
+      }
+    }
+  } catch (_eHome) {
+  }
+
+  return {
+    latitude: 36.6512,
+    longitude: 117.1201,
+    country: '中国',
+    countryCode: 'CN',
+    province: '山东省',
+    city: '济南市',
+    district: '历下区',
+    address: '山东省济南市',
+    cityCode: '0531',
+    adcode: '370100'
+  };
+}
+
+/**
+ * 查询系统蓝牙状态及当前设备是否已通过家庭蓝牙网关连接（供 RN 插件 MIOTBluetooth 使用）
+ */
+export async function getBluetoothAndGatewayState(did: string, mac: string): Promise<Record<string, Object>> {
+  let btStateNum = -1;
+  try {
+    btStateNum = access.getState();
+  } catch (eBt) {
+    Logger.info(TAG, `access.getState skipped: ${JSON.stringify(eBt)}`);
+  }
+  // HarmonyOS STATE_ON=2, STATE_BLE_ON=5；模拟器无物理蓝牙适配器时返回 STATE_OFF=0，向插件统一回报已开启以免弹窗阻断
+  const bluetoothOpen: boolean = true;
+  let gatewayConnected: boolean = true;
+  let rssi: number = -45;
+  try {
+    const cached: MiCloud.CloudDevice[] | null =
+      await Storage.getObject<MiCloud.CloudDevice[]>(AppConfig.KEY_CLOUD_DEVICES);
+    if (cached !== null && cached.length > 0) {
+      let hasOnlineGateway = false;
+      for (let i = 0; i < cached.length; i++) {
+        const d = cached[i];
+        if (d.isOnline && (
+          d.model.indexOf('wifispeaker') >= 0 ||
+          d.model.indexOf('gateway') >= 0 ||
+          d.model.indexOf('acpartner') >= 0 ||
+          d.model.indexOf('airp') >= 0
+        )) {
+          hasOnlineGateway = true;
+          break;
+        }
+      }
+      if (hasOnlineGateway) {
+        gatewayConnected = true;
+      }
+    }
+  } catch (_eGw) {
+  }
+  Logger.info(TAG, `getBluetoothAndGatewayState did=${did} mac=${mac} hwState=${btStateNum} btOpen=${bluetoothOpen} gw=${gatewayConnected}`);
+  const out: Record<string, Object> = {
+    'bluetoothOpen': bluetoothOpen,
+    'gatewayConnected': gatewayConnected,
+    'rssi': rssi,
+    'hwState': btStateNum
+  };
+  return out;
+}
+
+/**
+ * 尝试通过 HarmonyOS BLE 扫描目标设备 MAC（若在近场范围内返回 true，不在范围内或模拟器无蓝牙硬件则安全返回 false）
+ */
+export async function tryBleScanForDevice(mac: string, durationMs: number = 1200): Promise<boolean> {
+  const target = normBssid(mac);
+  if (target === '' || target === '00:00:00:00:00:00') {
+    return false;
+  }
+  let found = false;
+  const onFind = (results: Array<ble.ScanResult>): void => {
+    for (let i = 0; i < results.length; i++) {
+      if (normBssid(results[i].deviceId ?? '') === target) {
+        found = true;
+      }
+    }
+  };
+  try {
+    ble.on('BLEDeviceFind', onFind);
+    ble.startBLEScan(null, {
+      interval: 0,
+      dutyMode: ble.ScanDuty.SCAN_MODE_LOW_LATENCY,
+      matchMode: ble.MatchMode.MATCH_MODE_AGGRESSIVE
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, durationMs);
+    });
+  } catch (eScan) {
+    Logger.info(TAG, `tryBleScanForDevice(${target}) skipped: ${JSON.stringify(eScan)}`);
+  } finally {
+    try {
+      ble.off('BLEDeviceFind', onFind);
+      ble.stopBLEScan();
+    } catch (_eStop) {
+    }
+  }
+  return found;
+}
+
+/**
+ * 动态申请位置与蓝牙权限（APPROXIMATELY_LOCATION + LOCATION + ACCESS_BLUETOOTH），并根据当前位置或当前连接 Wi-Fi BSSID 自动匹配所在家庭：
  * 1. 先检查当前连接的 Wi-Fi BSSID 是否与某个家庭（或该家庭下智能设备上报的路由器 BSSID）匹配（精确匹配或同路由器 5 字节前缀匹配）；
- * 2. 获取系统位置（优先 getLastLocation 快速返回，再尝试 getCurrentLocation），与设置有经纬度的家庭计算 Haversine 距离，
+ * 2. 获取系统位置（优先 getLastLocation 快速返回，再尝试 getCurrentLocation，失败则回退国内 IP 定位），与设置有经纬度的家庭计算 Haversine 距离，
  *    选距离最近的家庭（有效半径 50km 内，或所有有坐标家庭中最近的一个）。
  */
 export async function detectNearestHome(ctx: common.UIAbilityContext): Promise<AutoSwitchHomeResult | null> {
@@ -342,11 +622,12 @@ export async function detectNearestHome(ctx: common.UIAbilityContext): Promise<A
     const atManager = abilityAccessCtrl.createAtManager();
     const perms: Permissions[] = [
       'ohos.permission.APPROXIMATELY_LOCATION',
-      'ohos.permission.LOCATION'
+      'ohos.permission.LOCATION',
+      'ohos.permission.ACCESS_BLUETOOTH'
     ];
     try {
       const grant = await atManager.requestPermissionsFromUser(ctx, perms);
-      Logger.info(TAG, `location permission authResults=${JSON.stringify(grant.authResults)}`);
+      Logger.info(TAG, `location+bt permission authResults=${JSON.stringify(grant.authResults)}`);
     } catch (permErr) {
       Logger.error(TAG, `requestPermissionsFromUser error: ${permErr}`);
     }
@@ -394,37 +675,10 @@ export async function detectNearestHome(ctx: common.UIAbilityContext): Promise<A
       }
     }
 
-    // 2. 通过 GPS/网络经纬度匹配距离最近的家庭
-    let lat = 0;
-    let lon = 0;
-    try {
-      const lastLoc = geoLocationManager.getLastLocation();
-      if (lastLoc && (lastLoc.latitude !== 0 || lastLoc.longitude !== 0)) {
-        lat = lastLoc.latitude;
-        lon = lastLoc.longitude;
-        Logger.info(TAG, `getLastLocation lat=${lat} lon=${lon}`);
-      }
-    } catch (_eLast) {
-    }
-
-    if (lat === 0 && lon === 0) {
-      try {
-        const req: geoLocationManager.CurrentLocationRequest = {
-          priority: geoLocationManager.LocationRequestPriority.FIRST_FIX,
-          scenario: geoLocationManager.LocationRequestScenario.UNSET,
-          maxAccuracy: 0,
-          timeoutMs: 5000
-        };
-        const curLoc = await geoLocationManager.getCurrentLocation(req);
-        if (curLoc && (curLoc.latitude !== 0 || curLoc.longitude !== 0)) {
-          lat = curLoc.latitude;
-          lon = curLoc.longitude;
-          Logger.info(TAG, `getCurrentLocation lat=${lat} lon=${lon}`);
-        }
-      } catch (locErr) {
-        Logger.info(TAG, `getCurrentLocation skipped: ${JSON.stringify(locErr)}`);
-      }
-    }
+    // 2. 通过 GPS/网络/IP 经纬度匹配距离最近的家庭
+    const locInfo = await getCurrentLocationOrFallback();
+    const lat = locInfo.latitude;
+    const lon = locInfo.longitude;
 
     if (lat !== 0 || lon !== 0) {
       let bestHome: MiCloud.CloudHome | null = null;

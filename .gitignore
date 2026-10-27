@@ -9,7 +9,7 @@ mjhm/.hvigor/
 mjhm/.idea/
 mjhm/local.properties
 mjhm/oh_modules/
-
-hvigor_c2_build.log
-hvigor_c2_build2.log
+.hvigor/cache/
+.hvigor/outputs
+entry/build/
 

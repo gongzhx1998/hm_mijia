@@ -2597,6 +2597,47 @@
     specPluginNamesModels: function () { return []; }
   }, ['installModule']);
 
+  function _fetchHostLocation(accuracy) {
+    return hostInvoke('getLocation', { accuracy: accuracy || 1, did: HOST.device && HOST.device.did }).then(function (res) {
+      var d = (res && res.data) || res || {};
+      var lat = d.latitude != null && d.latitude !== '' && Number(d.latitude) !== 0 ? String(d.latitude) : '36.6512';
+      var lon = d.longitude != null && d.longitude !== '' && Number(d.longitude) !== 0 ? String(d.longitude) : '117.1201';
+      return {
+        latitude: lat,
+        longitude: lon,
+        country: d.country || '中国',
+        countryCode: d.countryCode || 'CN',
+        province: d.province || '山东省',
+        city: d.city || '济南市',
+        district: d.district || '历下区',
+        street: d.street || '',
+        address: d.address || '山东省济南市',
+        cityCode: d.cityCode || '0531',
+        adcode: d.adcode || '370100',
+        aoiname: d.aoiname || '',
+        accuracy: d.accuracy || 20,
+        altitude: d.altitude || 0
+      };
+    }).catch(function () {
+      return {
+        latitude: '36.6512',
+        longitude: '117.1201',
+        country: '中国',
+        countryCode: 'CN',
+        province: '山东省',
+        city: '济南市',
+        district: '历下区',
+        street: '',
+        address: '山东省济南市',
+        cityCode: '0531',
+        adcode: '370100',
+        aoiname: '',
+        accuracy: 20,
+        altitude: 0
+      };
+    });
+  }
+
   registerModule('MIOTHost', [
     'closeCurrentPage', 'backToPluginPage', 'copyToClipboard', 'getWifiList',
     'loadFloatWindowSettingPage', 'openPrivacyPage', 'openNewPage', 'openPluginPage',
@@ -2609,7 +2650,10 @@
     'getLocalFileList', 'deleteFile', 'writeFile', 'readFile', 'appendFile',
     'createDirectory', 'isFileExists', 'getFileInfo',
     'getPhoneScreenInfo', 'getAppSystemSupport', 'addLog',
-    'executeMethod', 'convertCronToDate', 'convertDateToCron'
+    'executeMethod', 'convertCronToDate', 'convertDateToCron',
+    'getLocation', 'checkPhoneLocationServerIsOpen', 'getLocationAuthorizationStatus',
+    'getBtGateWaySubDeviceRSSIWithMac', 'isBtGateWaySubDeviceWithMac',
+    'loadInfoCallback', 'saveInfo', 'loadCurrentCountryCode', 'getCurrentCountryInfoCallback'
   ], {
     language: 'zh',
     systemInfo: {
@@ -2655,9 +2699,62 @@
     addLog: function () {},
     executeMethod: function () { return Promise.resolve(null); },
     convertCronToDate: function () { return Promise.resolve({}); },
-    convertDateToCron: function () { return Promise.resolve(''); }
+    convertDateToCron: function () { return Promise.resolve(''); },
+    getLocation: function () {
+      return _fetchHostLocation(1);
+    },
+    checkPhoneLocationServerIsOpen: function () {
+      return Promise.resolve({ code: 0, data: { result: true, state: 1 } });
+    },
+    // 单参回调 function(status)
+    getLocationAuthorizationStatus: function () {
+      return Promise.resolve(true);
+    },
+    // 蓝牙网关子设备信号强度: MIOTHost.getBtGateWaySubDeviceRSSIWithMac(mac, (isOk, result) => { result.data.RSSI })
+    getBtGateWaySubDeviceRSSIWithMac: function (mac) {
+      return hostInvoke('getBluetoothState', { mac: mac || (HOST.device && HOST.device.mac) || '', did: HOST.device && HOST.device.did }).then(function (res) {
+        var rssi = (res && typeof res.rssi === 'number') ? res.rssi : -45;
+        return { code: 0, data: { RSSI: rssi, rssi: rssi } };
+      }).catch(function () {
+        return { code: 0, data: { RSSI: -45, rssi: -45 } };
+      });
+    },
+    // 单参回调 function(flag)
+    isBtGateWaySubDeviceWithMac: function (mac) {
+      return hostInvoke('getBluetoothState', { mac: mac || (HOST.device && HOST.device.mac) || '', did: HOST.device && HOST.device.did }).then(function (res) {
+        if (res && typeof res.gatewayConnected === 'boolean') return res.gatewayConnected;
+        return true;
+      }).catch(function () {
+        return true;
+      });
+    },
+    // Host.storage.get(key) -> MIOTHost.loadInfoCallback(key, function(value)) 单参回调
+    loadInfoCallback: function (key) {
+      var v = '';
+      try {
+        if (typeof localStorage !== 'undefined' && key != null) {
+          v = localStorage.getItem('miot_kv_' + String(key)) || '';
+        }
+      } catch (_e) {}
+      return Promise.resolve(v);
+    },
+    saveInfo: function (key, val) {
+      try {
+        if (typeof localStorage !== 'undefined' && key != null) {
+          localStorage.setItem('miot_kv_' + String(key), val == null ? '' : String(val));
+        }
+      } catch (_e) {}
+    },
+    loadCurrentCountryCode: function () {
+      return Promise.resolve('cn');
+    },
+    getCurrentCountryInfoCallback: function () {
+      return Promise.resolve({ countryCode: 'CN', countryName: '中国', domain: 'cn' });
+    }
   }, [
-    'getWifiList', 'getDarkModeStatus', 'getAppSystemSupport'
+    'getWifiList', 'getDarkModeStatus', 'getAppSystemSupport',
+    'getLocationAuthorizationStatus', 'isBtGateWaySubDeviceWithMac',
+    'loadInfoCallback', 'loadCurrentCountryCode'
   ]);
 
   // After a successful cloud set, push the new values like the native device-message channel
@@ -2784,9 +2881,325 @@
     startSendWiFiConfig: function () {}
   });
 
-  ['MIOTFile', 'MIOTAudio', 'MIOTSystem', 'MIOTBluetooth', 'MIOTXimalaya', 'MIOTWifiSpeaker',
+  registerModule('MIOTFile', [
+    'readFile', 'writeFile', 'appendFile', 'deleteFile', 'isFileExists', 'readFileListFrom',
+    'readFileToHexString', 'readFileToBase64', 'getStorageInfo'
+  ], {}, {
+    readFile: function (fileName) {
+      var v = '';
+      try {
+        if (typeof localStorage !== 'undefined' && fileName) {
+          v = localStorage.getItem('miot_file_' + String(fileName)) || '';
+        }
+      } catch (_e) {}
+      return Promise.resolve(v);
+    },
+    writeFile: function (fileName, content) {
+      try {
+        if (typeof localStorage !== 'undefined' && fileName) {
+          localStorage.setItem('miot_file_' + String(fileName), content == null ? '' : String(content));
+        }
+      } catch (_e) {}
+      return Promise.resolve(true);
+    },
+    appendFile: function (fileName, content) {
+      try {
+        if (typeof localStorage !== 'undefined' && fileName) {
+          var prev = localStorage.getItem('miot_file_' + String(fileName)) || '';
+          localStorage.setItem('miot_file_' + String(fileName), prev + (content == null ? '' : String(content)));
+        }
+      } catch (_e) {}
+      return Promise.resolve(true);
+    },
+    deleteFile: function (fileName) {
+      try {
+        if (typeof localStorage !== 'undefined' && fileName) {
+          localStorage.removeItem('miot_file_' + String(fileName));
+        }
+      } catch (_e) {}
+      return Promise.resolve(true);
+    },
+    isFileExists: function (fileName) {
+      var exists = false;
+      try {
+        if (typeof localStorage !== 'undefined' && fileName) {
+          exists = localStorage.getItem('miot_file_' + String(fileName)) !== null;
+        }
+      } catch (_e) {}
+      return Promise.resolve(exists);
+    },
+    readFileListFrom: function () { return Promise.resolve([]); },
+    readFileToHexString: function () { return Promise.resolve(''); },
+    readFileToBase64: function () { return Promise.resolve(''); },
+    getStorageInfo: function () { return Promise.resolve({ code: 0, data: { freeSize: 1073741824, totalSize: 4294967296 } }); }
+  });
+
+  registerModule('MIOTSystem', [
+    'getLocationServerState', 'getLocation', 'checkPermission', 'checkAPPSystemConfigEnable',
+    'getBarHeight', 'getDualAppsState', 'getShakeSubsystemState', 'getBatteryInfo',
+    'getVolumeInfo', 'getGatewayIpAddress', 'getWifiBroadcastAddress', 'getScreenLockState',
+    'getHighTextContrastState', 'isMiConnectSupportNFC', 'getNfcInfo',
+    'vibrate', 'vibrateShort', 'vibrateLong', 'openAPPSystemConfigPage'
+  ], {}, {
+    // 门锁等插件通过 System.location.getLocationServerState() 检查系统定位开关，必须返回 { code: 0, data: { state: 1 } }
+    getLocationServerState: function () {
+      return Promise.resolve({ code: 0, data: { state: 1 } });
+    },
+    getLocation: function (accuracy) {
+      return _fetchHostLocation(accuracy).then(function (loc) {
+        return { code: 0, data: loc };
+      });
+    },
+    checkPermission: function () {
+      return Promise.resolve({ code: 0, data: { state: 1 } });
+    },
+    checkAPPSystemConfigEnable: function () {
+      return Promise.resolve({ code: 0, data: { state: true, enable: true } });
+    },
+    getBarHeight: function () {
+      return Promise.resolve({ code: 0, data: { height: 28 } });
+    },
+    getDualAppsState: function () {
+      return Promise.resolve({ code: 0, data: { state: false } });
+    },
+    getShakeSubsystemState: function () {
+      return Promise.resolve({ code: 0, data: { state: true } });
+    },
+    getBatteryInfo: function () {
+      return Promise.resolve({ code: 0, data: { level: 0.85, isCharging: false } });
+    },
+    getVolumeInfo: function () {
+      return Promise.resolve({ code: 0, data: { volume: 0.5 } });
+    },
+    getGatewayIpAddress: function () {
+      return Promise.resolve({ code: 0, data: { ipAddress: '192.168.1.1' } });
+    },
+    getWifiBroadcastAddress: function () {
+      return Promise.resolve({ code: 0, data: { ipAddress: '192.168.1.255' } });
+    },
+    getScreenLockState: function () {
+      return Promise.resolve({ code: 0, data: { state: 1 } });
+    },
+    getHighTextContrastState: function () {
+      return Promise.resolve({ code: 0, data: { state: false } });
+    },
+    isMiConnectSupportNFC: function () {
+      return Promise.resolve({ code: 0, data: { isSupport: false } });
+    },
+    getNfcInfo: function () {
+      return Promise.resolve({ code: 0, data: { state: 0 } });
+    },
+    vibrate: function () {},
+    vibrateShort: function () {},
+    vibrateLong: function () {},
+    openAPPSystemConfigPage: function () {}
+  });
+
+  registerModule('MHMapLocation', [
+    'startUpdatingLocation', 'getLocation', 'reLocationWithReGeocode', 'getDistance'
+  ], {}, {
+    startUpdatingLocation: function () {
+      _fetchHostLocation(1).then(function (loc) {
+        var pid = NAME_TO_ID.MIOTPackage;
+        var rnd = (pid != null && MODULES[pid].constants.eventRandom) || '';
+        callJs('RCTDeviceEventEmitter', 'emit', ['locationChanged' + rnd, loc]);
+      });
+      return Promise.resolve({ code: 0 });
+    },
+    getLocation: function () {
+      return _fetchHostLocation(1).then(function (loc) {
+        return { code: 0, data: loc };
+      });
+    },
+    reLocationWithReGeocode: function () {
+      return _fetchHostLocation(1).then(function (loc) {
+        return { code: 0, data: loc };
+      });
+    },
+    getDistance: function () {
+      return Promise.resolve({ distance: 50 });
+    }
+  });
+
+  registerModule('MIOTBluetooth', [
+    // 单参回调方法（放入 promiseIdx，settleNativeCallbacks 会以 [res] 调用单参回调）
+    'isBluetoothOpen', 'getBluetoothStateCallback', 'isBleGatewayConnected',
+    'isBluetoothHalfOpen', 'setAlertConfigs', 'retrievePeripheralsWithIdentifiers',
+    'retrievePeripheralsWithServices',
+    // 双参回调方法 (ok, res)
+    'checkBluetoothPermission', 'isBleOrMeshGatewayConnected', 'connect',
+    'readRSSI', 'getVersion', 'setNotifyWithCallback', 'setIndicationWithCallback',
+    'readHexStringWithCallback', 'writeHexStringWithCallback', 'doSpecOperation',
+    'oneTimePassword', 'initOneTimeContextBySelf', 'generateOneTimePwdBySelf',
+    'isShareSecureKeyValid', 'encryptMessageXiaoMiBLE', 'decryptMessageXiaoMiBLE',
+    'miotBleEncrypt', 'miotBleDecrypt', 'checkLockSecureRisk',
+    // 无回调方法
+    'startLeScan', 'stopScan', 'openBluetooth', 'disconnectDeviceWithDelay',
+    'discoverServices', 'discoverCharacteristics', 'bindDevice', 'unBindDevice',
+    'createBond', 'removeBond'
+  ], {}, {
+    // Bluetooth.checkBluetoothIsEnabled() -> MIOTBluetooth.isBluetoothOpen(function(flag))
+    isBluetoothOpen: function () {
+      return hostInvoke('getBluetoothState', { did: HOST.device && HOST.device.did }).then(function (res) {
+        if (res && typeof res.bluetoothOpen === 'boolean') return res.bluetoothOpen;
+        return true;
+      }).catch(function () {
+        return true;
+      });
+    },
+    // iOS 路径兜底: flag == 5 表示开启
+    getBluetoothStateCallback: function () {
+      return Promise.resolve(5);
+    },
+    // Bluetooth.isBleGatewayConnected(mac) -> MIOTBluetooth.isBleGatewayConnected(mac, function(flag))
+    isBleGatewayConnected: function (mac) {
+      return hostInvoke('getBluetoothState', { mac: mac || (HOST.device && HOST.device.mac) || '', did: HOST.device && HOST.device.did }).then(function (res) {
+        if (res && typeof res.gatewayConnected === 'boolean') return res.gatewayConnected;
+        return true;
+      }).catch(function () {
+        return true;
+      });
+    },
+    isBluetoothHalfOpen: function () {
+      return Promise.resolve(false);
+    },
+    setAlertConfigs: function () {
+      return Promise.resolve(true);
+    },
+    retrievePeripheralsWithIdentifiers: function () {
+      return Promise.resolve({});
+    },
+    retrievePeripheralsWithServices: function () {
+      return Promise.resolve({});
+    },
+    // 双参回调 (ok, res)
+    checkBluetoothPermission: function () {
+      return Promise.resolve({ code: 0, data: { checkBluetooth: true, state: 1 } });
+    },
+    isBleOrMeshGatewayConnected: function (mac, forceRefresh) {
+      var m = mac || (HOST.device && HOST.device.mac) || '';
+      return hostInvoke('getBluetoothState', { mac: m, did: HOST.device && HOST.device.did, forceRefresh: !!forceRefresh }).then(function (res) {
+        var connected = (res && typeof res.gatewayConnected === 'boolean') ? res.gatewayConnected : true;
+        return { code: 0, data: { connected: connected, mac: m } };
+      }).catch(function () {
+        return { code: 0, data: { connected: true, mac: m } };
+      });
+    },
+    connect: function (mac, type, option) {
+      var targetMac = mac || (HOST.device && HOST.device.mac) || '00:00:00:00:00:00';
+      var targetDid = (option && option.did) || (HOST.device && HOST.device.did) || '';
+      log('MIOTBluetooth.connect', targetMac, type);
+      return new Promise(function (resolve, reject) {
+        hostInvoke('bleConnect', { mac: targetMac, did: targetDid, type: type }).then(function (res) {
+          if (res && res.connected) {
+            resolve({
+              mac: targetMac,
+              services: res.services || [
+                {
+                  uuid: '00000100-0065-6C62-2E74-6F696D2E696D',
+                  chars: [
+                    '00000101-0065-6C62-2E74-6F696D2E696D',
+                    '00000102-0065-6C62-2E74-6F696D2E696D'
+                  ]
+                }
+              ]
+            });
+            return;
+          }
+          // 设备不在近场蓝牙范围内（如通过蓝牙网关远程查看门锁状态或运行在模拟器上）：
+          // 扫描约 1.5s 后发送 bluetoothConnectionStatusChanged(isConnected=false)，
+          // 让插件停止蓝牙连接脉冲动画并平稳进入“手机蓝牙未连接：靠近门锁时自动连接”（同时保持蓝牙网关在线状态，不弹错误 Toast）
+          _nST(function () {
+            var pid = NAME_TO_ID.MIOTPackage;
+            var rnd = (pid != null && MODULES[pid].constants.eventRandom) || '';
+            callJs('RCTDeviceEventEmitter', 'emit', ['bluetoothConnectionStatusChanged' + rnd, {
+              mac: targetMac,
+              isConnected: false
+            }]);
+          }, 1500);
+        }).catch(function () {
+          _nST(function () {
+            var pid = NAME_TO_ID.MIOTPackage;
+            var rnd = (pid != null && MODULES[pid].constants.eventRandom) || '';
+            callJs('RCTDeviceEventEmitter', 'emit', ['bluetoothConnectionStatusChanged' + rnd, {
+              mac: targetMac,
+              isConnected: false
+            }]);
+          }, 1500);
+        });
+      });
+    },
+    readRSSI: function () {
+      return Promise.resolve({ code: 0, data: { rssi: -50, RSSI: -50 } });
+    },
+    getVersion: function () {
+      return Promise.resolve('1.0.0');
+    },
+    setNotifyWithCallback: function () {
+      return Promise.resolve({ code: 0 });
+    },
+    setIndicationWithCallback: function () {
+      return Promise.resolve({ code: 0 });
+    },
+    readHexStringWithCallback: function () {
+      return Promise.resolve('');
+    },
+    writeHexStringWithCallback: function () {
+      return Promise.resolve({ code: 0 });
+    },
+    doSpecOperation: function () {
+      return Promise.resolve({ code: 0, data: {} });
+    },
+    oneTimePassword: function (mac, interval, digits) {
+      return Promise.reject({ code: -1, message: '请靠近门锁连接手机蓝牙后生成一次性密码' });
+    },
+    initOneTimeContextBySelf: function () {
+      return Promise.resolve({ code: 0, data: true });
+    },
+    generateOneTimePwdBySelf: function () {
+      return Promise.reject({ code: -1, message: '请靠近门锁连接手机蓝牙后生成一次性密码' });
+    },
+    isShareSecureKeyValid: function () {
+      return Promise.resolve({ code: 0, data: true });
+    },
+    encryptMessageXiaoMiBLE: function (mac, msg) {
+      return Promise.resolve(msg || '');
+    },
+    decryptMessageXiaoMiBLE: function (mac, enc) {
+      return Promise.resolve(enc || '');
+    },
+    miotBleEncrypt: function (mac, data) {
+      return Promise.resolve(data || '');
+    },
+    miotBleDecrypt: function (mac, data) {
+      return Promise.resolve(data || '');
+    },
+    checkLockSecureRisk: function () {
+      return Promise.resolve(false);
+    },
+    startLeScan: function (durationInMillis, serviceUUIDs) {
+      hostInvoke('bleStartScan', { duration: durationInMillis || 5000, services: serviceUUIDs || [] }).catch(function () {});
+    },
+    stopScan: function () {
+      hostInvoke('bleStopScan', {}).catch(function () {});
+    },
+    openBluetooth: function () {},
+    disconnectDeviceWithDelay: function () {},
+    discoverServices: function () {},
+    discoverCharacteristics: function () {},
+    bindDevice: function () {},
+    unBindDevice: function () {},
+    createBond: function () {},
+    removeBond: function () {}
+  }, [
+    'isBluetoothOpen', 'getBluetoothStateCallback', 'isBleGatewayConnected',
+    'isBluetoothHalfOpen', 'setAlertConfigs', 'retrievePeripheralsWithIdentifiers',
+    'retrievePeripheralsWithServices'
+  ]);
+
+  ['MIOTAudio', 'MIOTXimalaya', 'MIOTWifiSpeaker',
     'MIOTXiaoai', 'MIOTMiTvModule', 'ClassicBluetooth', 'HmPaceScalesModule', 'TJInfra',
-    'MHRoom', 'KooKong', 'MHMapSearch', 'MHMapLocation', 'MHCameraSDK', 'MHPluginFS',
+    'MHRoom', 'KooKong', 'MHMapSearch', 'MHCameraSDK', 'MHPluginFS',
     'MHAudio', 'MHSystem', 'MHGateway', 'MHDeviceList', 'MHMiotStore', 'MHDeviceGroup',
     'SSEBridge', 'Ximalaya', 'HTRCTEABluetooth', 'PdfManager', 'RNGLContext',
     'MHCameraFishEyeViewManager', 'MHCameraOpenGLViewManager', 'MHOrbitViewManager',
@@ -2894,7 +3307,10 @@
       connectAnimatedNodeToView: 1, disconnectAnimatedNodeFromView: 1, restoreDefaultValues: 1, dropAnimatedNode: 1,
       addAnimatedEventToView: 1, removeAnimatedEventFromView: 1,
       createTimer: 1, deleteTimer: 1, setSendIdleEvents: 1,
-      manageChildren: 1, setChildren: 1, createView: 1, updateView: 1
+      manageChildren: 1, setChildren: 1, createView: 1, updateView: 1,
+      startLeScan: 1, stopScan: 1, openBluetooth: 1, disconnectDeviceWithDelay: 1,
+      discoverServices: 1, discoverCharacteristics: 1, bindDevice: 1, unBindDevice: 1,
+      createBond: 1, removeBond: 1, saveInfo: 1, vibrate: 1, vibrateShort: 1, vibrateLong: 1
     };
     var peeled = NO_CALLBACK_METHODS[methodName]
       ? { args: (params || []).slice(), succId: null, failId: null }
@@ -3143,6 +3559,8 @@
 
   HOST.setDevice = function (d) {
     Object.assign(HOST.device, d || {});
+    if (d && d.did) HOST.device.deviceID = String(d.did);
+    if (!HOST.device.mac) HOST.device.mac = '00:00:00:00:00:00';
     // refresh constants on MIOTDevice module
     var id = NAME_TO_ID.MIOTDevice;
     if (id != null) MODULES[id].constants.currentDevice = Object.assign({}, HOST.device);

@@ -2,6 +2,7 @@ import { router, window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { common } from '@kit.AbilityKit';
 import * as MiCloud from '../service/MiCloud';
+import * as ApiService from '../service/ApiService';
 import { Logger } from '../common/AppConfig';
 import { ensureRnHostCache, RNHHOST_CACHE_REV } from '../service/RnHostWarm';
 import { resolvePlugin, PluginMeta, PluginUnavailableError } from '../service/PluginStore';
@@ -559,6 +560,49 @@ struct PluginHost {
       const specStr: string = await MiCloud.getSpecInstanceString(did);
       Logger.info(TAG, `bridge getSpecString did=${did} len=${specStr.length}`);
       return specStr;
+    }
+    if (action === 'getLocation') {
+      const loc = await ApiService.getCurrentLocationOrFallback();
+      const outLoc: Record<string, Object> = {
+        'code': 0,
+        'data': {
+          'latitude': String(loc.latitude),
+          'longitude': String(loc.longitude),
+          'country': loc.country,
+          'countryCode': loc.countryCode,
+          'province': loc.province,
+          'city': loc.city,
+          'district': loc.district,
+          'address': loc.address,
+          'cityCode': loc.cityCode,
+          'adcode': loc.adcode,
+          'accuracy': 20,
+          'altitude': 0
+        } as Record<string, Object>
+      };
+      return JSON.stringify(outLoc);
+    }
+    if (action === 'getBluetoothState') {
+      const did: string = this.targetDid(payload);
+      const mac: string = String(payload['mac'] ?? '');
+      const st = await ApiService.getBluetoothAndGatewayState(did, mac);
+      return JSON.stringify(st);
+    }
+    if (action === 'bleConnect') {
+      const did: string = this.targetDid(payload);
+      const mac: string = String(payload['mac'] ?? '');
+      const found: boolean = await ApiService.tryBleScanForDevice(mac, 800);
+      const st = await ApiService.getBluetoothAndGatewayState(did, mac);
+      const outBle: Record<string, Object> = {
+        'connected': found,
+        'gatewayConnected': Boolean(st['gatewayConnected'] ?? true),
+        'mac': mac
+      };
+      Logger.info(TAG, `bridge bleConnect did=${did} mac=${mac} found=${found}`);
+      return JSON.stringify(outBle);
+    }
+    if (action === 'bleStartScan' || action === 'bleStopScan') {
+      return JSON.stringify({ 'code': 0 } as Record<string, Object>);
     }
     return JSON.stringify(null);
   }
